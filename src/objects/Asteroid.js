@@ -22,10 +22,24 @@ export default class Asteroid {
         });
     }
 
-    update(w, h) {
-        this.x = ((this.x + Math.cos(this.angle) * this.speed) % w + w) % w;
-        this.y = ((this.y + Math.sin(this.angle) * this.speed) % h + h) % h;
+    // Steered update — no wrapping, soft homing back toward player if too far
+    update(playerX, playerY) {
+        this.x += Math.cos(this.angle) * this.speed;
+        this.y += Math.sin(this.angle) * this.speed;
         this.rotation += this.rotSpeed;
+
+        // If asteroid drifts more than 1400px from player, gently steer it back
+        const dx = playerX - this.x;
+        const dy = playerY - this.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 1400) {
+            const targetAngle = Math.atan2(dy, dx);
+            let diff = targetAngle - this.angle;
+            // Normalize angle difference to [-PI, PI]
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            this.angle += diff * 0.02;
+        }
     }
 
     draw(gfx) { this.drawAt(gfx, this.x, this.y); }

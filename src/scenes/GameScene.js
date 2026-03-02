@@ -1,9 +1,11 @@
 import Player from '../objects/Player.js';
 import Asteroid from '../objects/Asteroid.js';
 import { SaveManager } from '../SaveManager.js';
-import { GearData, rollLootDrop } from '../data/GearData.js';
+import { GearData, rollLootDrop, WEAPON_DROP_POOL } from '../data/GearData.js';
 
 const WAVE_BASE = 5;
+const WORLD_W = 6000;
+const WORLD_H = 6000;
 
 // ── Mobile button layout ──────────────────────────────────────────────────────
 const BTNS = (w, h) => {
@@ -15,7 +17,6 @@ const BTNS = (w, h) => {
         { key: 'thrust', x: w - 55, y: h - 65, label: '▲', color: 0xff9900, r: R },
     ];
 };
-// ─────────────────────────────────────────────────────────────────────────────
 
 export default class GameScene extends Phaser.Scene {
     constructor() { super('GameScene'); }
@@ -28,12 +29,15 @@ export default class GameScene extends Phaser.Scene {
         this._shootCooldown = 0; this._shield = null; this._weaponsDroppedThisWave = 0;
         this._mobileState = { rotLeft: false, rotRight: false, thrust: false, shoot: false };
         this._mobileButtons = [];
+        this._laserActive = false;
+        this._bgObjects = [];
+        this._camX = 0; this._camY = 0;
     }
 
     create() {
         const { width, height } = this.scale;
 
-        // Load loadout & build stats
+        // ── Load loadout & build stats ─────────────────────────────────────────
         const save = SaveManager.load();
         const lo = save.loadout;
         const eng = GearData.engines[lo.engine] || GearData.engines.engine_ion;
@@ -50,59 +54,122 @@ export default class GameScene extends Phaser.Scene {
         this._weaponStats = { ...wpn };
         this._shieldDef = shd;
         this._lives = this._playerStats.lives;
-
         if (shd) this._shield = { active: true, regenTimer: 0 };
 
-        // Keyboard input
+        // ── Keyboard input ─────────────────────────────────────────────────────
         this._keys = this.input.keyboard.addKeys({
             thrust: 'UP', rotLeft: 'LEFT', rotRight: 'RIGHT', shoot: 'SPACE',
             thrustW: 'W', rotLeftA: 'A', rotRightD: 'D',
         });
 
-        // Graphics layers — thrust particles underneath player
-        this._gfx = this.add.graphics().setDepth(0);
-        this._topGfx = this.add.graphics().setDepth(5); // shield ring, bullets
+        // ── Camera: follows player in large world ──────────────────────────────
+        // UI elements need their own fixed camera
+        this._uiCam = this.cameras.add(0, 0, width, height).setName('ui').ignore([]);
+        this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
 
-        // Multi-layer Parallax Starfield (4 depth layers)
-        this._stars = [];
-        const layers = [
-            { count: 30, minSize: 0.2, maxSize: 0.5, minAlpha: 0.08, maxAlpha: 0.2, parallaxFactor: 0.04 }, // furthest, tiny
-            { count: 40, minSize: 0.4, maxSize: 0.9, minAlpha: 0.15, maxAlpha: 0.35, parallaxFactor: 0.10 }, // mid-far
-            { count: 25, minSize: 0.7, maxSize: 1.3, minAlpha: 0.25, maxAlpha: 0.55, parallaxFactor: 0.20 }, // mid-near
-            { count: 12, minSize: 1.2, maxSize: 2.0, minAlpha: 0.45, maxAlpha: 0.80, parallaxFactor: 0.35 }, // foreground, twinkle-bright
+        // ── Multi-layer parallax background (screen-space, no world scroll) ───
+        // Drawn every frame on bgGfx using screen-space tiling parallax math
+        this._bgGfx = this.add.graphics().setScrollFactor(0).setDepth(-20);
+
+        // Star layers: array of { stars: [{ax,ay,size,alpha}], parallax }
+        // ax/ay are normalized [0,1] anchor positions, parallax in [0,1]
+        this._starLayers = [
+            { parallax: 0.03, stars: this._genStars(35, 0.15, 0.50, 0.06, 0.18) }, // far
+            { parallax: 0.08, stars: this._genStars(45, 0.40, 0.90, 0.15, 0.35) }, // mid-far
+            { parallax: 0.18, stars: this._genStars(28, 0.70, 1.30, 0.28, 0.55) }, // mid-near
+            { parallax: 0.32, stars: this._genStars(10, 1.20, 2.00, 0.45, 0.80) }, // foreground twinkle
         ];
-        layers.forEach((layer, li) => {
-            for (let i = 0; i < layer.count; i++) {
-                const size = Math.random() * (layer.maxSize - layer.minSize) + layer.minSize;
-                const alpha = Math.random() * (layer.maxAlpha - layer.minAlpha) + layer.minAlpha;
-                const star = this.add.circle(
-                    Math.random() * width, Math.random() * height,
-                    size, 0xffffff, alpha
-                ).setDepth(-10 + li); // layer 0 furthest, 3 closest
-                this._stars.push({ obj: star, parallax: layer.parallaxFactor });
-            }
-        });
 
-        // Bloom PostFX
-        this.cameras.main.postFX.addBloom(0xffffff, 1, 1, 1.2, 1.1);
+        // ── Sparse deep-space background objects (world space) ─────────────────
+        this._createBgObjects();
 
-        // Player
-        this._player = new Player(this, width / 2, height / 2, this._playerStats);
+        // ── World graphics layers ──────────────────────────────────────────────
+        this._gfx = this.add.graphics().setDepth(0);
+        this._topGfx = this.add.graphics().setDepth(5);
+
+        // ── Player (starts at world center) ────────────────────────────────────
+        this._player = new Player(this, WORLD_W / 2, WORLD_H / 2, this._playerStats);
+
+        // Point camera at player immediately
+        this._camX = this._player.x - width / 2;
+        this._camY = this._player.y - height / 2;
+        this.cameras.main.scrollX = this._camX;
+        this.cameras.main.scrollY = this._camY;
 
         this._spawnWave(this._wave);
 
-        // HUD
+        // ── HUD ────────────────────────────────────────────────────────────────
         if (!this.scene.isActive('HUDScene')) this.scene.launch('HUDScene');
         this._hud = this.scene.get('HUDScene');
         this._syncHUD();
 
         this.events.on('nextWave', this._onNextWave, this);
 
-        // Mobile controls
+        // ── Mobile controls ────────────────────────────────────────────────────
         this._createMobileControls();
+
+        // ── Bloom ──────────────────────────────────────────────────────────────
+        this.cameras.main.postFX.addBloom(0xffffff, 1, 1, 1.2, 1.1);
     }
 
-    // ── Syncs ────────────────────────────────────────────────────────────────
+    // ── Star layer generator ──────────────────────────────────────────────────
+    _genStars(count, minSz, maxSz, minAlpha, maxAlpha) {
+        return Array.from({ length: count }, () => ({
+            ax: Math.random(),
+            ay: Math.random(),
+            size: Math.random() * (maxSz - minSz) + minSz,
+            alpha: Math.random() * (maxAlpha - minAlpha) + minAlpha,
+        }));
+    }
+
+    // ── Deep-space background objects ─────────────────────────────────────────
+    _createBgObjects() {
+        // Planets – 3-5 sparse in world
+        const planetColors = [0x4466ff, 0xff8844, 0x44ff88, 0xaa44ff, 0xff4466];
+        const numPlanets = 4;
+        for (let i = 0; i < numPlanets; i++) {
+            const x = Math.random() * WORLD_W;
+            const y = Math.random() * WORLD_H;
+            const r = Math.random() * 60 + 30;
+            const col = planetColors[i % planetColors.length];
+            const ringCol = Phaser.Display.Color.IntegerToColor(col).lighten(40).color;
+            this._bgObjects.push({
+                type: 'planet', x, y, r, col, ringCol,
+                ringRot: Math.random() * Math.PI * 2,
+                ringW: Math.random() * 25 + 10,
+                hasRing: Math.random() > 0.5
+            });
+        }
+
+        // Nebulae – 3 large glowing clouds
+        const nebulaColors = [0x220055, 0x003322, 0x331100, 0x002244];
+        for (let i = 0; i < 3; i++) {
+            this._bgObjects.push({
+                type: 'nebula',
+                x: Math.random() * WORLD_W,
+                y: Math.random() * WORLD_H,
+                r: Math.random() * 250 + 150,
+                col: nebulaColors[i % nebulaColors.length],
+                alpha: 0.18 + Math.random() * 0.12,
+            });
+        }
+
+        // Comets – 2 with trails that move slowly across the world
+        for (let i = 0; i < 2; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            this._bgObjects.push({
+                type: 'comet',
+                x: Math.random() * WORLD_W,
+                y: Math.random() * WORLD_H,
+                vx: Math.cos(angle) * 0.4,
+                vy: Math.sin(angle) * 0.4,
+                trail: [],
+                trailMax: 60,
+            });
+        }
+    }
+
+    // ── Syncs ─────────────────────────────────────────────────────────────────
     _syncHUD() {
         if (!this._hud) return;
         this._hud.updateScore(this._score);
@@ -111,9 +178,9 @@ export default class GameScene extends Phaser.Scene {
         this._hud.updateShield(!!this._shield?.active);
     }
 
-    // ── Update loop ──────────────────────────────────────────────────────────
+    // ── Update loop ───────────────────────────────────────────────────────────
     update(_, delta) {
-        delta = Math.min(delta, 50); // cap: prevent physics spiral on slow/backgrounded devices
+        delta = Math.min(delta, 50);
         if (this._gameOver || this._waveClearPending) return;
         const { width, height } = this.scale;
         const k = this._keys;
@@ -130,27 +197,35 @@ export default class GameScene extends Phaser.Scene {
             if (rotatingR) this._player.rotate(1);
         }
 
+        // Weapon fire logic
+        this._laserActive = false;
         this._shootCooldown -= delta;
-        if (shooting && this._shootCooldown <= 0 && !this._invincible) {
-            this._fire();
-            this._shootCooldown = this._weaponStats.cooldown;
+        if (shooting && !this._invincible) {
+            const ws = this._weaponStats;
+            if (ws.type === 'laser') {
+                // Continuous laser – processed in _draw directly
+                this._laserActive = true;
+                this._laserHitAsteroid();
+            } else if (this._shootCooldown <= 0) {
+                this._fire();
+                this._shootCooldown = ws.cooldown;
+            }
         }
 
-        this._player.update(delta, width, height);
+        this._player.update(delta, WORLD_W, WORLD_H);
 
-        // Emit thrust particles this frame (uses _wasThrusting set in player.update)
         if (this._player._wasThrusting) this._emitThrustParticles();
 
-        // Update bullet positions
+        // Update bullets
         this._bullets = this._bullets.filter(b => {
             b.x += b.vx; b.y += b.vy; b.life -= delta;
-            return b.x >= 0 && b.x <= width && b.y >= 0 && b.y <= height && b.life > 0;
+            return b.life > 0;
         });
 
-        // Update asteroids
-        this._asteroids.forEach(a => a.update(width, height));
+        // Update asteroids (pass player position for soft homing)
+        this._asteroids.forEach(a => a.update(this._player.x, this._player.y));
 
-        // Updates logic: Collsions
+        // Collisions
         this._bulletAsteroidCollisions();
         if (!this._invincible) this._playerAsteroidCollisions();
         this._updatePickups(delta);
@@ -161,55 +236,238 @@ export default class GameScene extends Phaser.Scene {
             if (this._shield.regenTimer <= 0) { this._shield.active = true; this._syncHUD(); }
         }
 
-        // Update explosion particles
+        // Update particles
         const dt = delta / 16.67;
         this._particles = this._particles.filter(p => {
             p.x += p.vx * dt; p.y += p.vy * dt; p.life -= p.decay * dt; return p.life > 0;
         });
-
-        // Update thrust particles (slow drag)
         this._thrustParticles = this._thrustParticles.filter(p => {
             p.vx *= 0.96; p.vy *= 0.96;
             p.x += p.vx * dt; p.y += p.vy * dt;
             p.life -= p.decay * dt; return p.life > 0;
         });
 
-        // Parallax Stars
-        this._stars?.forEach(s => {
-            // Stars move opposite to player velocity
-            s.obj.x = ((s.obj.x - this._player.vx * s.parallax) % width + width) % width;
-            s.obj.y = ((s.obj.y - this._player.vy * s.parallax) % height + height) % height;
+        // Update comet positions
+        this._bgObjects.filter(o => o.type === 'comet').forEach(c => {
+            c.trail.push({ x: c.x, y: c.y });
+            if (c.trail.length > c.trailMax) c.trail.shift();
+            c.x = ((c.x + c.vx) % WORLD_W + WORLD_W) % WORLD_W;
+            c.y = ((c.y + c.vy) % WORLD_H + WORLD_H) % WORLD_H;
         });
 
-        if (this._hud) this._hud.updateScore(this._score);
+        // Smooth camera follow player
+        const targetCX = this._player.x - width / 2;
+        const targetCY = this._player.y - height / 2;
+        this._camX += (targetCX - this._camX) * 0.10;
+        this._camY += (targetCY - this._camY) * 0.10;
+        this.cameras.main.scrollX = Phaser.Math.Clamp(this._camX, 0, WORLD_W - width);
+        this.cameras.main.scrollY = Phaser.Math.Clamp(this._camY, 0, WORLD_H - height);
 
+        if (this._hud) this._hud.updateScore(this._score);
         if (this._asteroids.length === 0) this._waveClear();
 
+        this._drawBackground();
         this._draw();
     }
 
-    _updatePickups(delta) {
-        this._pickups = this._pickups.filter(p => {
-            p.life -= delta;
-            p.rotation = (p.rotation || 0) + 0.05;
+    // ── Parallax background draw (screen-space tiling) ────────────────────────
+    _drawBackground() {
+        const { width, height } = this.scale;
+        const bg = this._bgGfx;
+        bg.clear();
 
-            // Player collision
-            if (!this._gameOver && !this._invincible && this._player._visible) {
-                if (Math.hypot(this._player.x - p.x, this._player.y - p.y) < this._playerStats.radius + 15) {
-                    this._weaponStats = { ...GearData.weapons[p.id] };
-                    this._shootCooldown = 0;
-                    // Play a quick confirmation particle blast using the weapon's color
-                    this._explode(p.x, p.y, this._weaponStats.bulletColor || 0xffffff);
-                    return false; // Remove collected pickup
-                }
-            }
-            return p.life > 0;
+        this._starLayers.forEach(layer => {
+            layer.stars.forEach(s => {
+                // Tiling parallax: star screen pos shifts by a fraction of camera scroll
+                const sx = ((s.ax * width - this._camX * layer.parallax % width + width * 20) % width);
+                const sy = ((s.ay * height - this._camY * layer.parallax % height + height * 20) % height);
+                bg.fillStyle(0xffffff, s.alpha);
+                bg.fillCircle(sx, sy, s.size);
+            });
         });
     }
 
-    // ── Firing ───────────────────────────────────────────────────────────────
+    // ── World draw (world-space objects, camera handles offset) ──────────────
+    _draw() {
+        const g = this._gfx;
+        const tg = this._topGfx;
+        g.clear();
+        tg.clear();
+
+        const cam = this.cameras.main;
+
+        // 0. Deep-space background objects
+        this._bgObjects.forEach(o => {
+            if (o.type === 'nebula') {
+                // Visible range check
+                if (Math.hypot(o.x - cam.scrollX - cam.width / 2, o.y - cam.scrollY - cam.height / 2) > o.r + 500) return;
+                g.fillStyle(o.col, o.alpha);
+                g.fillCircle(o.x, o.y, o.r);
+                g.fillStyle(o.col, o.alpha * 0.5);
+                g.fillCircle(o.x + 40, o.y + 30, o.r * 0.7);
+                g.fillStyle(o.col, o.alpha * 0.3);
+                g.fillCircle(o.x - 50, o.y - 40, o.r * 0.5);
+            } else if (o.type === 'planet') {
+                if (Math.hypot(o.x - cam.scrollX - cam.width / 2, o.y - cam.scrollY - cam.height / 2) > o.r + 400) return;
+                // Planet body
+                g.fillStyle(o.col, 0.85);
+                g.fillCircle(o.x, o.y, o.r);
+                // Shading
+                g.fillStyle(0x000000, 0.3);
+                g.fillCircle(o.x + o.r * 0.25, o.y - o.r * 0.1, o.r * 0.8);
+                // Ring
+                if (o.hasRing) {
+                    g.lineStyle(o.ringW, o.ringCol, 0.4);
+                    g.strokeEllipse(o.x, o.y, o.r * 3.2, o.r * 0.7);
+                }
+                // Atmosphere glow
+                g.lineStyle(6, o.col, 0.2);
+                g.strokeCircle(o.x, o.y, o.r + 8);
+            } else if (o.type === 'comet') {
+                // Trail
+                o.trail.forEach((pt, i) => {
+                    const alpha = (i / o.trail.length) * 0.6;
+                    const size = (i / o.trail.length) * 3;
+                    g.fillStyle(0xaaddff, alpha);
+                    g.fillCircle(pt.x, pt.y, size);
+                });
+                // Head
+                g.fillStyle(0xffffff, 0.9);
+                g.fillCircle(o.x, o.y, 3.5);
+                g.fillStyle(0xaaddff, 0.5);
+                g.fillCircle(o.x, o.y, 7);
+            }
+        });
+
+        // 1. Explosion particles
+        this._particles.forEach(p => {
+            const alpha = Phaser.Math.Clamp(p.life, 0, 1);
+            const r = (p.color >> 16) & 0xff, gv = (p.color >> 8) & 0xff, b = p.color & 0xff;
+            g.fillStyle(Phaser.Display.Color.GetColor(r, gv, b), alpha);
+            g.fillCircle(p.x, p.y, p.size);
+        });
+
+        // 2. Thrust particles — heat gradient
+        this._thrustParticles.forEach(tp => {
+            const age = 1 - tp.life;
+            let r, gv, b;
+            if (age < 0.25) { const t = age / 0.25; r = 255; gv = 255; b = Math.round(220 * (1 - t)); }
+            else if (age < 0.55) { const t = (age - 0.25) / 0.30; r = 255; gv = Math.round(255 - 155 * t); b = 0; }
+            else { const t = (age - 0.55) / 0.45; r = 255; gv = Math.round(100 * (1 - t)); b = 0; }
+            g.fillStyle(Phaser.Display.Color.GetColor(r, gv, b), tp.life * 0.85);
+            g.fillCircle(tp.x, tp.y, tp.size);
+        });
+
+        // 3. Player ship
+        if (this._player._visible) this._player.draw(g);
+
+        // 4. Asteroids
+        this._asteroids.forEach(a => a.draw(g));
+
+        // 5. Bullets
+        this._bullets.forEach(b => {
+            const alpha = Phaser.Math.Clamp(b.life / 1400, 0, 1);
+            const r = (b.color >> 16) & 0xff;
+            const gv = (b.color >> 8) & 0xff;
+            const bv = b.color & 0xff;
+            const isBomb = b.isBomb;
+            tg.fillStyle(Phaser.Display.Color.GetColor(r, gv, bv), alpha);
+            if (isBomb) {
+                tg.fillCircle(b.x, b.y, 7);
+                tg.lineStyle(2, b.color, alpha * 0.5);
+                tg.strokeCircle(b.x, b.y, b.bombRadius * (1 - b.life / 6000) * 0.4);
+            } else {
+                tg.fillCircle(b.x, b.y, 3);
+            }
+        });
+
+        // 5b. Continuous laser beam
+        if (this._laserActive && this._player._visible) {
+            const p = this._player;
+            const cos = Math.cos(p.rotation);
+            const sin = Math.sin(p.rotation);
+            const startX = p.x + cos * 20;
+            const startY = p.y + sin * 20;
+            const len = 900;   // beam length in world units
+            const endX = startX + cos * len;
+            const endY = startY + sin * len;
+
+            // Outer glow
+            tg.lineStyle(8, 0xff00ff, 0.2);
+            tg.beginPath();
+            tg.moveTo(startX, startY);
+            tg.lineTo(endX, endY);
+            tg.strokePath();
+            // Core beam
+            tg.lineStyle(2, 0xff00ff, 0.9);
+            tg.beginPath();
+            tg.moveTo(startX, startY);
+            tg.lineTo(endX, endY);
+            tg.strokePath();
+        }
+
+        // 6. Shield ring
+        if (this._shield?.active && this._player._visible) {
+            tg.lineStyle(2, 0x4488ff, 0.6);
+            tg.strokeCircle(this._player.x, this._player.y, this._playerStats.radius + 14);
+        }
+
+        // 7. Pickups
+        this._pickups.forEach(p => {
+            const alpha = Phaser.Math.Clamp(p.life / 2000, 0, 1);
+            const wInfo = GearData.weapons[p.id];
+            const color = wInfo?.bulletColor || 0xffff00;
+            const size = 12;
+            const cos = Math.cos(p.rotation);
+            const sin = Math.sin(p.rotation);
+
+            tg.lineStyle(2, color, alpha);
+            tg.fillStyle(color, alpha * 0.4);
+            tg.beginPath();
+            tg.moveTo(p.x + cos * size - sin * size, p.y + sin * size + cos * size);
+            tg.lineTo(p.x - cos * size - sin * size, p.y - sin * size + cos * size);
+            tg.lineTo(p.x - cos * size + sin * size, p.y - sin * size - cos * size);
+            tg.lineTo(p.x + cos * size + sin * size, p.y + sin * size - cos * size);
+            tg.closePath();
+            tg.fillPath();
+            tg.strokePath();
+            tg.fillStyle(color, alpha);
+            tg.fillCircle(p.x, p.y, 5);
+        });
+    }
+
+    // ── Firing ────────────────────────────────────────────────────────────────
     _fire() {
         const p = this._player, ws = this._weaponStats;
+
+        if (ws.type === '360') {
+            // Fire 8 bullets evenly in all directions
+            for (let i = 0; i < 8; i++) {
+                const a = (i / 8) * Math.PI * 2;
+                this._bullets.push({
+                    x: p.x + Math.cos(a) * 22,
+                    y: p.y + Math.sin(a) * 22,
+                    vx: Math.cos(a) * ws.bulletSpeed,
+                    vy: Math.sin(a) * ws.bulletSpeed,
+                    life: 1800, color: ws.bulletColor,
+                });
+            }
+            return;
+        }
+
+        if (ws.type === 'bomb') {
+            this._bullets.push({
+                x: p.x + Math.cos(p.rotation) * 22,
+                y: p.y + Math.sin(p.rotation) * 22,
+                vx: Math.cos(p.rotation) * ws.bulletSpeed + p.vx * 0.2,
+                vy: Math.sin(p.rotation) * ws.bulletSpeed + p.vy * 0.2,
+                life: 6000, color: ws.bulletColor,
+                isBomb: true, bombRadius: ws.bombRadius,
+            });
+            return;
+        }
+
+        // Standard: single, rapid, triple
         for (let i = 0; i < ws.bulletCount; i++) {
             const spread = ws.bulletCount > 1 ? (i - (ws.bulletCount - 1) / 2) * ws.spread : 0;
             const a = p.rotation + spread;
@@ -218,21 +476,52 @@ export default class GameScene extends Phaser.Scene {
                 y: p.y + Math.sin(p.rotation) * 22,
                 vx: Math.cos(a) * ws.bulletSpeed + p.vx * 0.3,
                 vy: Math.sin(a) * ws.bulletSpeed + p.vy * 0.3,
-                life: 2000, color: ws.bulletColor || 0xffffff,
+                life: 2000, color: ws.bulletColor,
             });
         }
     }
 
-    // ── Thrust particles ─────────────────────────────────────────────────────
+    // ── Laser hit detection (raycast) ─────────────────────────────────────────
+    _laserHitAsteroid() {
+        const p = this._player;
+        const cos = Math.cos(p.rotation);
+        const sin = Math.sin(p.rotation);
+        const len = 900;
+
+        const deadA = new Set(), newRocks = [];
+        this._asteroids.forEach((a, ai) => {
+            if (deadA.has(ai)) return;
+            // Project asteroid center onto laser ray, check perpendicular distance
+            const dx = a.x - p.x;
+            const dy = a.y - p.y;
+            const proj = dx * cos + dy * sin;    // distance along ray
+            if (proj < 0 || proj > len) return;  // behind ship or too far
+            const perp = Math.abs(dx * sin - dy * cos); // perpendicular dist
+            if (perp < a.size + 5) deadA.add(ai);
+        });
+
+        this._asteroids.forEach((a, ai) => {
+            if (deadA.has(ai)) {
+                this._explode(a.x, a.y, a.colorHex);
+                this._score += a.size > 25 ? 10 : a.size > 14 ? 30 : 50;
+                if (a.size > 18) {
+                    newRocks.push(new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult));
+                    newRocks.push(new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult));
+                }
+            } else newRocks.push(a);
+        });
+        this._asteroids = newRocks;
+    }
+
+    // ── Thrust particles ──────────────────────────────────────────────────────
     _emitThrustParticles() {
         const p = this._player;
         const cos = Math.cos(p.rotation);
         const sin = Math.sin(p.rotation);
-        // Exhaust nozzle — back of ship
         const ox = p.x - cos * 12;
         const oy = p.y - sin * 12;
 
-        if (this._thrustParticles.length >= 250) return; // performance cap
+        if (this._thrustParticles.length >= 250) return;
         for (let i = 0; i < 5; i++) {
             const spread = (Math.random() - 0.5) * 0.65;
             const spd = Math.random() * 3.2 + 1.4;
@@ -249,41 +538,70 @@ export default class GameScene extends Phaser.Scene {
         }
     }
 
-    // ── Wave spawning ────────────────────────────────────────────────────────
+    // ── Wave spawning ─────────────────────────────────────────────────────────
     _spawnWave(wave) {
-        const { width, height } = this.scale;
         const count = WAVE_BASE + (wave - 1) * 2;
         const speedMult = 1 + (wave - 1) * 0.12;
+        // Spawn around player position (not screen center)
+        const px = this._player.x, py = this._player.y;
         for (let i = 0; i < count; i++) {
             let x, y;
-            do { x = Math.random() * width; y = Math.random() * height; }
-            while (Math.hypot(x - width / 2, y - height / 2) < 120);
+            do {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.random() * 400 + 200;
+                x = px + Math.cos(angle) * dist;
+                y = py + Math.sin(angle) * dist;
+            } while (Math.hypot(x - px, y - py) < 150);
             this._asteroids.push(new Asteroid(this, x, y, 40, null, speedMult));
         }
     }
 
-    // ── Collisions ───────────────────────────────────────────────────────────
+    // ── Pickups ───────────────────────────────────────────────────────────────
+    _updatePickups(delta) {
+        this._pickups = this._pickups.filter(p => {
+            p.life -= delta;
+            p.rotation = (p.rotation || 0) + 0.05;
+            if (!this._gameOver && !this._invincible && this._player._visible) {
+                if (Math.hypot(this._player.x - p.x, this._player.y - p.y) < this._playerStats.radius + 15) {
+                    this._weaponStats = { ...GearData.weapons[p.id] };
+                    this._shootCooldown = 0;
+                    this._explode(p.x, p.y, this._weaponStats.bulletColor || 0xffffff);
+                    return false;
+                }
+            }
+            return p.life > 0;
+        });
+    }
+
+    // ── Collisions ────────────────────────────────────────────────────────────
     _bulletAsteroidCollisions() {
         const deadB = new Set(), deadA = new Set(), newRocks = [];
         this._bullets.forEach((b, bi) => {
             this._asteroids.forEach((a, ai) => {
                 if (deadA.has(ai)) return;
-                if (Math.hypot(b.x - a.x, b.y - a.y) < a.size) { deadB.add(bi); deadA.add(ai); }
+                const hit = b.isBomb
+                    ? Math.hypot(b.x - a.x, b.y - a.y) < b.bombRadius // bomb: large radius, always kills even big
+                    : Math.hypot(b.x - a.x, b.y - a.y) < a.size;
+                if (hit) { deadB.add(bi); deadA.add(ai); }
             });
         });
+
         this._asteroids.forEach((a, ai) => {
             if (deadA.has(ai)) {
                 this._explode(a.x, a.y, a.colorHex);
                 this._score += a.size > 25 ? 10 : a.size > 14 ? 30 : 50;
-                if (a.size > 18) {
+
+                // Bomb destroys large without splitting
+                const killedByBomb = [...deadB].some(bi => this._bullets[bi]?.isBomb);
+                if (a.size > 18 && !killedByBomb) {
                     newRocks.push(new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult));
                     newRocks.push(new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult));
                 }
 
+                // Random weapon drop (only upgrades drop)
                 if (this._weaponsDroppedThisWave < 2 && Math.random() < 0.06) {
-                    const wkeys = Object.keys(GearData.weapons);
-                    const randomWepId = wkeys[Math.floor(Math.random() * wkeys.length)];
-                    this._pickups.push({ x: a.x, y: a.y, id: randomWepId, life: 12000, rotation: 0 });
+                    const wepId = WEAPON_DROP_POOL[Math.floor(Math.random() * WEAPON_DROP_POOL.length)];
+                    this._pickups.push({ x: a.x, y: a.y, id: wepId, life: 14000, rotation: 0 });
                     this._weaponsDroppedThisWave++;
                 }
             } else newRocks.push(a);
@@ -314,8 +632,8 @@ export default class GameScene extends Phaser.Scene {
         this._syncHUD();
         this._explode(this._player.x, this._player.y, 0xffffff);
         if (this._lives <= 0) { this._endGame(); return; }
-        const { width, height } = this.scale;
-        Object.assign(this._player, { x: width / 2, y: height / 2, vx: 0, vy: 0, rotation: -Math.PI / 2, rotVel: 0, _visible: true });
+        // Respawn in place (no screen center reset)
+        Object.assign(this._player, { vx: 0, vy: 0, rotation: -Math.PI / 2, rotVel: 0, _visible: true });
         if (this._shield) { this._shield.active = true; this._shield.regenTimer = 0; }
         this._invincible = true;
         let n = 0;
@@ -327,7 +645,7 @@ export default class GameScene extends Phaser.Scene {
         });
     }
 
-    // ── Wave clear ───────────────────────────────────────────────────────────
+    // ── Wave clear ────────────────────────────────────────────────────────────
     _waveClear() {
         this._waveClearPending = true;
         const save = SaveManager.load();
@@ -349,7 +667,7 @@ export default class GameScene extends Phaser.Scene {
         this._syncHUD();
     }
 
-    // ── Game over ────────────────────────────────────────────────────────────
+    // ── Game over ─────────────────────────────────────────────────────────────
     _endGame() {
         this._gameOver = true;
         const save = SaveManager.load();
@@ -359,137 +677,30 @@ export default class GameScene extends Phaser.Scene {
         this.scene.launch('GameOverScene', { score: this._score, wave: this._wave });
     }
 
-    // ── Explosion particles ───────────────────────────────────────────────────
+    // ── Explosion ─────────────────────────────────────────────────────────────
     _explode(x, y, colorHex) {
         for (let i = 0; i < 18; i++) {
             const a = (i / 18) * Math.PI * 2 + Math.random() * 0.4;
             const spd = Math.random() * 2.5 + 0.5;
-            this._particles.push({ x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, life: 1, decay: Math.random() * 0.025 + 0.015, size: Math.random() * 2.5 + 0.8, color: colorHex });
-        }
-    }
-
-    // ── Draw ─────────────────────────────────────────────────────────────────
-    _draw() {
-        const g = this._gfx;
-        const tg = this._topGfx;
-        g.clear();
-        tg.clear();
-
-        // 1. Explosion particles
-        this._particles.forEach(p => {
-            const alpha = Phaser.Math.Clamp(p.life, 0, 1);
-            const r = (p.color >> 16) & 0xff, gv = (p.color >> 8) & 0xff, b = p.color & 0xff;
-            g.fillStyle(Phaser.Display.Color.GetColor(r, gv, b), alpha);
-            g.fillCircle(p.x, p.y, p.size);
-        });
-
-        // 2. Thrust particles — heat gradient (white→yellow→orange→red)
-        this._thrustParticles.forEach(tp => {
-            const age = 1 - tp.life; // 0=fresh, 1=dying
-            let r, gv, b;
-            if (age < 0.25) {
-                const t = age / 0.25;
-                r = 255; gv = 255; b = Math.round(220 * (1 - t));
-            } else if (age < 0.55) {
-                const t = (age - 0.25) / 0.30;
-                r = 255; gv = Math.round(255 - 155 * t); b = 0;
-            } else {
-                const t = (age - 0.55) / 0.45;
-                r = 255; gv = Math.round(100 * (1 - t)); b = 0;
-            }
-            g.fillStyle(Phaser.Display.Color.GetColor(r, gv, b), tp.life * 0.85);
-            g.fillCircle(tp.x, tp.y, tp.size);
-        });
-
-        // 3. Player ship (wrapping ghosts)
-        if (this._player._visible) {
-            this._forEachWrappedOffset(this._player.x, this._player.y, 22, width, height, (ox, oy) => {
-                this._player.drawAt(g, this._player.x + ox, this._player.y + oy);
+            this._particles.push({
+                x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
+                life: 1, decay: Math.random() * 0.025 + 0.015, size: Math.random() * 2.5 + 0.8, color: colorHex
             });
         }
-
-        // 4. Asteroids (wrapping ghosts)
-        this._asteroids.forEach(a => {
-            this._forEachWrappedOffset(a.x, a.y, a.size, width, height, (ox, oy) => {
-                a.drawAt(g, a.x + ox, a.y + oy);
-            });
-        });
-
-        // 5. Bullets (top layer)
-        this._bullets.forEach(b => {
-            const alpha = Phaser.Math.Clamp(b.life / 1400, 0, 1);
-            const r = (b.color >> 16) & 0xff, gv = (b.color >> 8) & 0xff, bv = b.color & 0xff;
-            tg.fillStyle(Phaser.Display.Color.GetColor(r, gv, bv), alpha);
-            tg.fillCircle(b.x, b.y, 3);
-        });
-
-        // 6. Shield ring
-        if (this._shield?.active && this._player._visible) {
-            tg.lineStyle(2, 0x4488ff, 0.6);
-            tg.strokeCircle(this._player.x, this._player.y, this._playerStats.radius + 14);
-        }
-
-        // 7. Pickups
-        this._pickups.forEach(p => {
-            const alpha = Phaser.Math.Clamp(p.life / 2000, 0, 1);
-            const wInfo = GearData.weapons[p.id];
-            const color = wInfo?.bulletColor || 0xffff00;
-
-            const size = 12;
-            const cos = Math.cos(p.rotation);
-            const sin = Math.sin(p.rotation);
-
-            tg.lineStyle(2, color, alpha);
-            tg.fillStyle(color, alpha * 0.4);
-
-            tg.beginPath();
-            tg.moveTo(p.x + cos * size - sin * size, p.y + sin * size + cos * size);
-            tg.lineTo(p.x - cos * size - sin * size, p.y - sin * size + cos * size);
-            tg.lineTo(p.x - cos * size + sin * size, p.y - sin * size - cos * size);
-            tg.lineTo(p.x + cos * size + sin * size, p.y + sin * size - cos * size);
-            tg.closePath();
-
-            tg.fillPath();
-            tg.strokePath();
-
-            // Draw a distinct inner shape
-            tg.fillStyle(color, alpha);
-            tg.fillCircle(p.x, p.y, 5);
-        });
-    }
-
-    // ── Wrap-around ghost rendering helper ────────────────────────────────────
-    // Calls fn(offsetX, offsetY) for the main position (0,0) and any edge ghosts needed.
-    _forEachWrappedOffset(x, y, radius, w, h, fn) {
-        fn(0, 0);
-        if (x - radius < 0) fn(w, 0);
-        if (x + radius > w) fn(-w, 0);
-        if (y - radius < 0) fn(0, h);
-        if (y + radius > h) fn(0, -h);
-        // Corners
-        if (x - radius < 0 && y - radius < 0) fn(w, h);
-        if (x + radius > w && y - radius < 0) fn(-w, h);
-        if (x - radius < 0 && y + radius > h) fn(w, -h);
-        if (x + radius > w && y + radius > h) fn(-w, -h);
     }
 
     // ── Mobile controls ───────────────────────────────────────────────────────
     _createMobileControls() {
         const { width, height } = this.scale;
-
         this._mobileButtons = BTNS(width, height);
-        this._btnGfx = this.add.graphics().setDepth(20);
+        this._btnGfx = this.add.graphics().setScrollFactor(0).setDepth(20);
         this._btnLabels = this._mobileButtons.map(btn =>
             this.add.text(btn.x, btn.y, btn.label, {
                 fontFamily: 'monospace', fontSize: '22px', color: '#ffffff'
-            }).setOrigin(0.5).setAlpha(0.35).setDepth(21)
+            }).setOrigin(0.5).setAlpha(0.35).setScrollFactor(0).setDepth(21)
         );
-
         this._renderButtons();
-
-        // Enable 4 simultaneous touches
         this.input.addPointer(3);
-
         this.input.on('pointerdown', this._refreshMobileState, this);
         this.input.on('pointermove', this._refreshMobileState, this);
         this.input.on('pointerup', this._refreshMobileState, this);
@@ -497,12 +708,10 @@ export default class GameScene extends Phaser.Scene {
     }
 
     _refreshMobileState() {
-        // Reset then check all active pointers
         Object.keys(this._mobileState).forEach(k => this._mobileState[k] = false);
         [this.input.pointer1, this.input.pointer2, this.input.pointer3, this.input.pointer4]
             .filter(p => p?.isDown)
             .forEach(ptr => {
-                // Expand hit area invisibly by 1.6x for more forgiving touches on mobile
                 const hit = this._mobileButtons.find(btn => Math.hypot(ptr.x - btn.x, ptr.y - btn.y) <= (btn.r * 1.6));
                 if (hit) this._mobileState[hit.key] = true;
             });
@@ -519,9 +728,7 @@ export default class GameScene extends Phaser.Scene {
             gfx.fillCircle(btn.x, btn.y, btn.r);
             gfx.lineStyle(1.5, btn.color, pressed ? 0.85 : 0.22);
             gfx.strokeCircle(btn.x, btn.y, btn.r);
-            if (this._btnLabels?.[i]) {
-                this._btnLabels[i].setAlpha(pressed ? 0.95 : 0.32);
-            }
+            if (this._btnLabels?.[i]) this._btnLabels[i].setAlpha(pressed ? 0.95 : 0.32);
         });
     }
 

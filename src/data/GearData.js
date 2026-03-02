@@ -5,10 +5,15 @@ export const GearData = {
         engine_overdrive: { id: 'engine_overdrive', name: 'Overdrive', desc: 'Extreme speed, hard to control.', thrustPower: 0.18, maxSpeed: 9.0, rotAccel: 0.007, color: 0xff0066, rarity: 'rare' },
     },
     weapons: {
-        weapon_basic: { id: 'weapon_basic', name: 'Pulse Cannon', desc: 'Single shot, reliable.', cooldown: 200, bulletSpeed: 6, bulletCount: 1, spread: 0, bulletColor: 0xffffff, rarity: 'common' },
-        weapon_spread: { id: 'weapon_spread', name: 'Spread Shot', desc: 'Three bullets in a fan.', cooldown: 350, bulletSpeed: 5.5, bulletCount: 3, spread: 0.25, bulletColor: 0xffff00, rarity: 'uncommon' },
-        weapon_laser: { id: 'weapon_laser', name: 'Laser Repeater', desc: 'Rapid single shots.', cooldown: 80, bulletSpeed: 9, bulletCount: 1, spread: 0, bulletColor: 0x00ff88, rarity: 'uncommon' },
-        weapon_missile: { id: 'weapon_missile', name: 'Homing Missile', desc: 'Slow burst, seeks asteroids.', cooldown: 900, bulletSpeed: 3.5, bulletCount: 1, spread: 0, bulletColor: 0xff00ff, rarity: 'rare', homing: true },
+        // Default — basic pulse cannon (always unlocked)
+        weapon_basic: { id: 'weapon_basic', name: 'Pulse Cannon', desc: 'Standard single shot.', cooldown: 300, bulletSpeed: 6, bulletCount: 1, spread: 0, bulletColor: 0xffffff, rarity: 'common', type: 'bullet' },
+
+        // Upgrades — always strictly better than default
+        weapon_rapid: { id: 'weapon_rapid', name: 'Rapid Fire', desc: 'High-speed burst fire.', cooldown: 80, bulletSpeed: 8, bulletCount: 1, spread: 0, bulletColor: 0x00ff88, rarity: 'uncommon', type: 'bullet' },
+        weapon_triple: { id: 'weapon_triple', name: 'Triple Shot', desc: 'Three spread shots per fire.', cooldown: 260, bulletSpeed: 7, bulletCount: 3, spread: 0.28, bulletColor: 0xffff00, rarity: 'uncommon', type: 'bullet' },
+        weapon_laser: { id: 'weapon_laser', name: 'Laser Beam', desc: 'Continuous piercing laser beam.', cooldown: 0, bulletSpeed: 0, bulletCount: 1, spread: 0, bulletColor: 0xff00ff, rarity: 'uncommon', type: 'laser' },
+        weapon_bomb: { id: 'weapon_bomb', name: 'Nova Bomb', desc: 'Slow projectile — destroys large asteroids instantly.', cooldown: 1200, bulletSpeed: 2.5, bulletCount: 1, spread: 0, bulletColor: 0xff6600, rarity: 'rare', type: 'bomb', bombRadius: 80 },
+        weapon_360: { id: 'weapon_360', name: '360° Burst', desc: '8 bullets fired in all directions.', cooldown: 600, bulletSpeed: 6, bulletCount: 8, spread: 0, bulletColor: 0x00ffff, rarity: 'rare', type: '360' },
     },
     shields: {
         shield_basic: { id: 'shield_basic', name: 'Deflector', desc: 'Absorbs one hit then breaks.', regenTime: null, color: 0x4488ff, rarity: 'uncommon' },
@@ -24,9 +29,11 @@ export const GearData = {
 const LOOT_POOL = [
     { slot: 'engines', id: 'engine_afterburner', weight: 3 },
     { slot: 'engines', id: 'engine_overdrive', weight: 1 },
-    { slot: 'weapons', id: 'weapon_spread', weight: 3 },
-    { slot: 'weapons', id: 'weapon_laser', weight: 3 },
-    { slot: 'weapons', id: 'weapon_missile', weight: 1 },
+    { slot: 'weapons', id: 'weapon_rapid', weight: 3 },
+    { slot: 'weapons', id: 'weapon_triple', weight: 3 },
+    { slot: 'weapons', id: 'weapon_laser', weight: 2 },
+    { slot: 'weapons', id: 'weapon_bomb', weight: 1 },
+    { slot: 'weapons', id: 'weapon_360', weight: 1 },
     { slot: 'shields', id: 'shield_basic', weight: 4 },
     { slot: 'shields', id: 'shield_regen', weight: 2 },
     { slot: 'hulls', id: 'hull_speeder', weight: 2 },
@@ -41,6 +48,9 @@ export function rollLootDrop(ownedGear) {
     for (const item of available) { roll -= item.weight; if (roll <= 0) return item; }
     return available[available.length - 1];
 }
+
+// Only upgraded (non-default) weapons drop in-game
+export const WEAPON_DROP_POOL = ['weapon_rapid', 'weapon_triple', 'weapon_laser', 'weapon_bomb', 'weapon_360'];
 
 export const RARITY_COLORS = { common: '#aaaaaa', uncommon: '#00ff88', rare: '#ff00ff' };
 export const SLOT_LABELS = { engines: 'ENGINE', weapons: 'WEAPON', shields: 'SHIELD', hulls: 'HULL' };

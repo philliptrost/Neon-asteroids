@@ -36,9 +36,18 @@ export default class Player {
         if (spd > this.maxSpeed) { const r = this.maxSpeed / spd; this.vx *= r; this.vy *= r; }
     }
 
-    update(delta, w, h) {
-        this.x = ((this.x + this.vx) % w + w) % w;
-        this.y = ((this.y + this.vy) % h + h) % h;
+    update(delta, worldW, worldH) {
+        // No wrapping — free movement in large world
+        this.x += this.vx;
+        this.y += this.vy;
+
+        // Soft world barrier — bounce gently off world edges
+        const margin = 100;
+        if (this.x < margin) { this.vx += 0.15; }
+        if (this.x > worldW - margin) { this.vx -= 0.15; }
+        if (this.y < margin) { this.vy += 0.15; }
+        if (this.y > worldH - margin) { this.vy -= 0.15; }
+
         this.vx *= this.friction;
         this.vy *= this.friction;
         this.rotation += this.rotVel;
