@@ -63,14 +63,25 @@ export default class GameScene extends Phaser.Scene {
         this._gfx = this.add.graphics().setDepth(0);
         this._topGfx = this.add.graphics().setDepth(5); // shield ring, bullets
 
-        // Starfield Parallax
+        // Multi-layer Parallax Starfield (4 depth layers)
         this._stars = [];
-        for (let i = 0; i < 90; i++) {
-            const size = Math.random() * 1.5 + 0.3;
-            // Place stars way deep in the background
-            const star = this.add.circle(Math.random() * width, Math.random() * height, size, 0xffffff, Math.random() * 0.5 + 0.1).setDepth(-10);
-            this._stars.push({ obj: star, parallax: size * 0.15 });
-        }
+        const layers = [
+            { count: 30, minSize: 0.2, maxSize: 0.5, minAlpha: 0.08, maxAlpha: 0.2, parallaxFactor: 0.04 }, // furthest, tiny
+            { count: 40, minSize: 0.4, maxSize: 0.9, minAlpha: 0.15, maxAlpha: 0.35, parallaxFactor: 0.10 }, // mid-far
+            { count: 25, minSize: 0.7, maxSize: 1.3, minAlpha: 0.25, maxAlpha: 0.55, parallaxFactor: 0.20 }, // mid-near
+            { count: 12, minSize: 1.2, maxSize: 2.0, minAlpha: 0.45, maxAlpha: 0.80, parallaxFactor: 0.35 }, // foreground, twinkle-bright
+        ];
+        layers.forEach((layer, li) => {
+            for (let i = 0; i < layer.count; i++) {
+                const size = Math.random() * (layer.maxSize - layer.minSize) + layer.minSize;
+                const alpha = Math.random() * (layer.maxAlpha - layer.minAlpha) + layer.minAlpha;
+                const star = this.add.circle(
+                    Math.random() * width, Math.random() * height,
+                    size, 0xffffff, alpha
+                ).setDepth(-10 + li); // layer 0 furthest, 3 closest
+                this._stars.push({ obj: star, parallax: layer.parallaxFactor });
+            }
+        });
 
         // Bloom PostFX
         this.cameras.main.postFX.addBloom(0xffffff, 1, 1, 1.2, 1.1);
@@ -390,11 +401,19 @@ export default class GameScene extends Phaser.Scene {
             g.fillCircle(tp.x, tp.y, tp.size);
         });
 
-        // 3. Player ship
-        if (this._player._visible) this._player.draw(g);
+        // 3. Player ship (wrapping ghosts)
+        if (this._player._visible) {
+            this._forEachWrappedOffset(this._player.x, this._player.y, 22, width, height, (ox, oy) => {
+                this._player.drawAt(g, this._player.x + ox, this._player.y + oy);
+            });
+        }
 
-        // 4. Asteroids
-        this._asteroids.forEach(a => a.draw(g));
+        // 4. Asteroids (wrapping ghosts)
+        this._asteroids.forEach(a => {
+            this._forEachWrappedOffset(a.x, a.y, a.size, width, height, (ox, oy) => {
+                a.drawAt(g, a.x + ox, a.y + oy);
+            });
+        });
 
         // 5. Bullets (top layer)
         this._bullets.forEach(b => {
@@ -437,6 +456,21 @@ export default class GameScene extends Phaser.Scene {
             tg.fillStyle(color, alpha);
             tg.fillCircle(p.x, p.y, 5);
         });
+    }
+
+    // ── Wrap-around ghost rendering helper ────────────────────────────────────
+    // Calls fn(offsetX, offsetY) for the main position (0,0) and any edge ghosts needed.
+    _forEachWrappedOffset(x, y, radius, w, h, fn) {
+        fn(0, 0);
+        if (x - radius < 0) fn(w, 0);
+        if (x + radius > w) fn(-w, 0);
+        if (y - radius < 0) fn(0, h);
+        if (y + radius > h) fn(0, -h);
+        // Corners
+        if (x - radius < 0 && y - radius < 0) fn(w, h);
+        if (x + radius > w && y - radius < 0) fn(-w, h);
+        if (x - radius < 0 && y + radius > h) fn(w, -h);
+        if (x + radius > w && y + radius > h) fn(-w, -h);
     }
 
     // ── Mobile controls ───────────────────────────────────────────────────────

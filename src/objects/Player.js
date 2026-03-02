@@ -55,12 +55,15 @@ export default class Player {
     }
 
     draw(gfx) {
-        // Trail (faint, behind ship)
+        // Trail (faint, stays at true world position only)
         for (const pt of this._trail) {
             gfx.fillStyle(0xffffff, (1 - pt.age / this._trailMax) * 0.35);
             gfx.fillCircle(pt.x, pt.y, 1.0);
         }
+        this.drawAt(gfx, this.x, this.y);
+    }
 
+    drawAt(gfx, x, y) {
         if (!this._visible) return;
 
         const cos = Math.cos(this.rotation);
@@ -70,9 +73,9 @@ export default class Player {
         gfx.lineStyle(2, 0xffffff, 1);
         gfx.fillStyle(0x0a0a2e, 0.95);
         gfx.beginPath();
-        gfx.moveTo(this.x + cos * 18, this.y + sin * 18);
-        gfx.lineTo(this.x - cos * 10 - sin * 11, this.y - sin * 10 + cos * 11);
-        gfx.lineTo(this.x - cos * 10 + sin * 11, this.y - sin * 10 - cos * 11);
+        gfx.moveTo(x + cos * 18, y + sin * 18);
+        gfx.lineTo(x - cos * 10 - sin * 11, y - sin * 10 + cos * 11);
+        gfx.lineTo(x - cos * 10 + sin * 11, y - sin * 10 - cos * 11);
         gfx.closePath();
         gfx.fillPath();
         gfx.strokePath();

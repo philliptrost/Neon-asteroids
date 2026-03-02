@@ -28,13 +28,15 @@ export default class Asteroid {
         this.rotation += this.rotSpeed;
     }
 
-    draw(gfx) {
+    draw(gfx) { this.drawAt(gfx, this.x, this.y); }
+
+    drawAt(gfx, x, y) {
         const cos = Math.cos(this.rotation), sin = Math.sin(this.rotation);
         gfx.lineStyle(2, this.colorHex, 1);
         gfx.beginPath();
         this.verts.forEach((v, i) => {
-            const rx = v.x * cos - v.y * sin + this.x;
-            const ry = v.x * sin + v.y * cos + this.y;
+            const rx = v.x * cos - v.y * sin + x;
+            const ry = v.x * sin + v.y * cos + y;
             i === 0 ? gfx.moveTo(rx, ry) : gfx.lineTo(rx, ry);
         });
         gfx.closePath();
