@@ -1,12 +1,102 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Neon Asteroids</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Neon Asteroids</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+      touch-action: none;
+      overscroll-behavior: none;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-user-select: none;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    canvas {
+      display: block;
+      touch-action: none;
+    }
+
+    /* Landscape orientation overlay */
+    #landscape-warning {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #000011;
+      z-index: 9999;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #00ffff;
+      font-family: monospace;
+      font-size: 18px;
+      text-align: center;
+      gap: 16px;
+    }
+
+    #portrait-warning .icon {
+      font-size: 52px;
+      animation: spin 3s linear infinite;
+    }
+
+    #portrait-warning .sub {
+      color: #334455;
+      font-size: 13px;
+    }
+
+    @keyframes spin {
+      0% {
+        transform: rotate(0deg);
+      }
+
+      40% {
+        transform: rotate(0deg);
+      }
+
+      60% {
+        transform: rotate(90deg);
+      }
+
+      100% {
+        transform: rotate(90deg);
+      }
+    }
+
+    @media (orientation: landscape) {
+      #landscape-warning {
+        display: flex;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Shown automatically via CSS when device is landscape -->
+  <div id="landscape-warning">
+    <div class="icon">⟳</div>
+    <div>ROTATE YOUR DEVICE</div>
+    <div class="sub">Neon Asteroids is played in portrait</div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+
 </html>
