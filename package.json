@@ -10,6 +10,7 @@
     "deploy": "npm run build && firebase deploy"
   },
   "dependencies": {
+    "firebase": "^12.10.0",
     "phaser": "^3.80.1"
   },
   "devDependencies": {

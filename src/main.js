@@ -6,6 +6,7 @@ import GameScene from './scenes/GameScene.js';
 import HUDScene from './scenes/HUDScene.js';
 import WaveCompleteScene from './scenes/WaveCompleteScene.js';
 import GameOverScene from './scenes/GameOverScene.js';
+import './firebaseInit.js'; // Initialize Firebase Analytics
 
 const config = {
     type: Phaser.AUTO,
