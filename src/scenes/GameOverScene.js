@@ -9,6 +9,9 @@ export default class GameOverScene extends Phaser.Scene {
     create() {
         const { width, height } = this.scale;
 
+        // Bloom PostFX
+        this.cameras.main.postFX.addBloom(0xffffff, 1, 1, 1.2, 1.1);
+
         this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.75);
 
         this.add.text(width / 2, height * 0.22, 'GAME OVER', {

@@ -14,6 +14,10 @@ export default class HangarScene extends Phaser.Scene {
 
     create() {
         const { width, height } = this.scale;
+
+        // Bloom PostFX
+        this.cameras.main.postFX.addBloom(0xffffff, 1, 1, 1.2, 1.1);
+
         this._save = SaveManager.load();
         this._pending = { ...this._save.loadout };
         this._buttons = [];

@@ -63,6 +63,18 @@ export default class GameScene extends Phaser.Scene {
         this._gfx = this.add.graphics().setDepth(0);
         this._topGfx = this.add.graphics().setDepth(5); // shield ring, bullets
 
+        // Starfield Parallax
+        this._stars = [];
+        for (let i = 0; i < 90; i++) {
+            const size = Math.random() * 1.5 + 0.3;
+            // Place stars way deep in the background
+            const star = this.add.circle(Math.random() * width, Math.random() * height, size, 0xffffff, Math.random() * 0.5 + 0.1).setDepth(-10);
+            this._stars.push({ obj: star, parallax: size * 0.15 });
+        }
+
+        // Bloom PostFX
+        this.cameras.main.postFX.addBloom(0xffffff, 1, 1, 1.2, 1.1);
+
         // Player
         this._player = new Player(this, width / 2, height / 2, this._playerStats);
 
@@ -149,6 +161,13 @@ export default class GameScene extends Phaser.Scene {
             p.vx *= 0.96; p.vy *= 0.96;
             p.x += p.vx * dt; p.y += p.vy * dt;
             p.life -= p.decay * dt; return p.life > 0;
+        });
+
+        // Parallax Stars
+        this._stars?.forEach(s => {
+            // Stars move opposite to player velocity
+            s.obj.x = ((s.obj.x - this._player.vx * s.parallax) % width + width) % width;
+            s.obj.y = ((s.obj.y - this._player.vy * s.parallax) % height + height) % height;
         });
 
         if (this._hud) this._hud.updateScore(this._score);

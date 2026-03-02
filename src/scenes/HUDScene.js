@@ -2,6 +2,9 @@ export default class HUDScene extends Phaser.Scene {
     constructor() { super('HUDScene'); }
 
     create() {
+        // Bloom
+        this.cameras.main.postFX.addBloom(0xffffff, 1, 1, 1.2, 1.1);
+
         this._scoreText = this.add.text(16, 14, 'SCORE: 0', {
             fontFamily: 'monospace', fontSize: '16px', color: '#ffffff'
         });

@@ -6,6 +6,9 @@ export default class MainMenuScene extends Phaser.Scene {
     create() {
         const { width, height } = this.scale;
 
+        // Bloom PostFX
+        this.cameras.main.postFX.addBloom(0xffffff, 1, 1, 1.2, 1.1);
+
         // Starfield
         this._stars = [];
         for (let i = 0; i < 100; i++) {
