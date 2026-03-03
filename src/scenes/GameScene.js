@@ -7,6 +7,15 @@ const WAVE_BASE = 5;
 const WORLD_W = 6000;
 const WORLD_H = 6000;
 
+const WEAPON_TIERS = {
+    weapon_basic:  0,
+    weapon_rapid:  1,
+    weapon_triple: 1,
+    weapon_laser:  2,
+    weapon_bomb:   2,
+    weapon_360:    2,
+};
+
 // ── Mobile button layout ──────────────────────────────────────────────────────
 const BTNS = (w, h) => {
     const R = 45;
@@ -52,6 +61,7 @@ export default class GameScene extends Phaser.Scene {
             lives: hull.lives, radius: hull.radius,
         };
         this._weaponStats = { ...wpn };
+        this._currentWeaponId = lo.weapon || 'weapon_basic';
         this._shieldDef = shd;
         this._lives = this._playerStats.lives;
         if (shd) this._shield = { active: true, regenTimer: 0 };
@@ -97,6 +107,7 @@ export default class GameScene extends Phaser.Scene {
         this.cameras.main.scrollY = this._camY;
 
         this._spawnWave(this._wave);
+        this._spawnAmbientAsteroids();
 
         // ── HUD ────────────────────────────────────────────────────────────────
         if (!this.scene.isActive('HUDScene')) this.scene.launch('HUDScene');
@@ -264,7 +275,7 @@ export default class GameScene extends Phaser.Scene {
         this.cameras.main.scrollY = Phaser.Math.Clamp(this._camY, 0, WORLD_H - height);
 
         if (this._hud) this._hud.updateScore(this._score);
-        if (this._asteroids.length === 0) this._waveClear();
+        if (this._asteroids.length === 0 || this._asteroids.every(a => a.isAmbient)) this._waveClear();
 
         this._drawBackground();
         this._draw();
@@ -505,8 +516,10 @@ export default class GameScene extends Phaser.Scene {
                 this._explode(a.x, a.y, a.colorHex);
                 this._score += a.size > 25 ? 10 : a.size > 14 ? 30 : 50;
                 if (a.size > 18) {
-                    newRocks.push(new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult));
-                    newRocks.push(new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult));
+                    const c1 = new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult);
+                    const c2 = new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult);
+                    if (a.isAmbient) { c1.isAmbient = true; c2.isAmbient = true; }
+                    newRocks.push(c1, c2);
                 }
             } else newRocks.push(a);
         });
@@ -556,6 +569,22 @@ export default class GameScene extends Phaser.Scene {
         }
     }
 
+    // ── Ambient asteroid field (persistent world debris) ──────────────────────
+    _spawnAmbientAsteroids() {
+        const cx = WORLD_W / 2, cy = WORLD_H / 2;
+        let count = 0;
+        while (count < 40) {
+            const x = Math.random() * WORLD_W;
+            const y = Math.random() * WORLD_H;
+            if (Math.hypot(x - cx, y - cy) < 600) continue;
+            const size = Math.random() < 0.5 ? 40 : 20;
+            const rock = new Asteroid(this, x, y, size, null, 0.6);
+            rock.isAmbient = true;
+            this._asteroids.push(rock);
+            count++;
+        }
+    }
+
     // ── Pickups ───────────────────────────────────────────────────────────────
     _updatePickups(delta) {
         this._pickups = this._pickups.filter(p => {
@@ -563,9 +592,14 @@ export default class GameScene extends Phaser.Scene {
             p.rotation = (p.rotation || 0) + 0.05;
             if (!this._gameOver && !this._invincible && this._player._visible) {
                 if (Math.hypot(this._player.x - p.x, this._player.y - p.y) < this._playerStats.radius + 15) {
-                    this._weaponStats = { ...GearData.weapons[p.id] };
-                    this._shootCooldown = 0;
-                    this._explode(p.x, p.y, this._weaponStats.bulletColor || 0xffffff);
+                    const curTier = WEAPON_TIERS[this._currentWeaponId] ?? 0;
+                    const newTier = WEAPON_TIERS[p.id] ?? 0;
+                    if (newTier >= curTier) {
+                        this._currentWeaponId = p.id;
+                        this._weaponStats = { ...GearData.weapons[p.id] };
+                        this._shootCooldown = 0;
+                    }
+                    this._explode(p.x, p.y, GearData.weapons[p.id]?.bulletColor || 0xffffff);
                     return false;
                 }
             }
@@ -594,8 +628,10 @@ export default class GameScene extends Phaser.Scene {
                 // Bomb destroys large without splitting
                 const killedByBomb = [...deadB].some(bi => this._bullets[bi]?.isBomb);
                 if (a.size > 18 && !killedByBomb) {
-                    newRocks.push(new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult));
-                    newRocks.push(new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult));
+                    const c1 = new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult);
+                    const c2 = new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult);
+                    if (a.isAmbient) { c1.isAmbient = true; c2.isAmbient = true; }
+                    newRocks.push(c1, c2);
                 }
 
                 // Random weapon drop (only upgrades drop)
