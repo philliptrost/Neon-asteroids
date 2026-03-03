@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(test -d \"c:\\\\Users\\\\Phillip\\\\Documents\\\\dev\\\\neon asteriods\\\\Neon-asteroids/.gemini\")"
+    ]
+  }
+}
