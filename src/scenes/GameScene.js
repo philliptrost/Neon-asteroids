@@ -7,6 +7,10 @@ const WAVE_BASE = 5;
 const WORLD_W = 6000;
 const WORLD_H = 6000;
 
+const UFO_RADIUS = 27;
+const UFO_HP     = 2;
+const UFO_SCORE  = 200;
+
 const WEAPON_TIERS = {
     weapon_basic:   0,
     weapon_rapid:   1,
@@ -36,6 +40,7 @@ export default class GameScene extends Phaser.Scene {
         this._invincible = false; this._gameOver = false; this._waveClearPending = false;
         this._bullets = []; this._asteroids = []; this._particles = []; this._pickups = [];
         this._thrustParticles = [];
+        this._ufo = null; this._ufoBullets = [];
         this._shootCooldown = 0; this._shield = null; this._weaponsDroppedThisWave = 0;
         this._mobileState = { rotLeft: false, rotRight: false, thrust: false, shoot: false };
         this._mobileButtons = [];
@@ -113,6 +118,7 @@ export default class GameScene extends Phaser.Scene {
 
         this._spawnWave(this._wave);
         this._spawnAmbientAsteroids();
+        this._scheduleUFO();
 
         // ── HUD ────────────────────────────────────────────────────────────────
         if (!this.scene.isActive('HUDScene')) this.scene.launch('HUDScene');
@@ -264,6 +270,10 @@ export default class GameScene extends Phaser.Scene {
         this._bulletAsteroidCollisions();
         if (!this._invincible) this._playerAsteroidCollisions();
         this._updatePickups(delta);
+
+        // UFO
+        if (this._ufo) this._updateUFO(delta);
+        this._ufoCollisions();
 
         // Shield regen
         if (this._shield && !this._shield.active && this._shieldDef?.regenTime) {
@@ -483,6 +493,38 @@ export default class GameScene extends Phaser.Scene {
             tg.fillStyle(color, alpha);
             tg.fillCircle(p.x, p.y, 5);
         });
+
+        // 8. UFO
+        if (this._ufo) {
+            const { x, y } = this._ufo;
+            // Saucer body (wide flat ellipse)
+            tg.fillStyle(0xcc44ff, 0.85);
+            tg.fillEllipse(x, y, UFO_RADIUS * 2, UFO_RADIUS * 0.7);
+            // Rim highlight
+            tg.lineStyle(2, 0xff88ff, 0.9);
+            tg.strokeEllipse(x, y, UFO_RADIUS * 2, UFO_RADIUS * 0.7);
+            // Dome on top
+            tg.fillStyle(0x88ccff, 0.75);
+            tg.fillEllipse(x, y - UFO_RADIUS * 0.25, UFO_RADIUS * 1.0, UFO_RADIUS * 0.65);
+            tg.lineStyle(1, 0xaaddff, 0.6);
+            tg.strokeEllipse(x, y - UFO_RADIUS * 0.25, UFO_RADIUS * 1.0, UFO_RADIUS * 0.65);
+            // Running lights (four colored dots around rim)
+            const lightCols = [0xff0000, 0x00ff88, 0xff0000, 0x00ff88];
+            for (let i = 0; i < 4; i++) {
+                const la = (i / 4) * Math.PI * 2;
+                tg.fillStyle(lightCols[i], 0.9);
+                tg.fillCircle(x + Math.cos(la) * UFO_RADIUS * 0.85, y + Math.sin(la) * UFO_RADIUS * 0.2, 2.5);
+            }
+        }
+
+        // 8b. UFO bullets
+        this._ufoBullets.forEach(b => {
+            const alpha = Phaser.Math.Clamp(b.life / 3000, 0, 1);
+            tg.fillStyle(0xff4444, alpha);
+            tg.fillCircle(b.x, b.y, 3.5);
+            tg.lineStyle(1, 0xff8888, alpha * 0.6);
+            tg.strokeCircle(b.x, b.y, 5.5);
+        });
     }
 
     // ── Firing ────────────────────────────────────────────────────────────────
@@ -568,8 +610,9 @@ export default class GameScene extends Phaser.Scene {
                 this._explode(a.x, a.y, a.colorHex);
                 this._score += a.size > 25 ? 10 : a.size > 14 ? 30 : 50;
                 if (a.size > 18) {
-                    const c1 = new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult);
-                    const c2 = new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult);
+                    const childSize = a.size >= 50 ? 40 : 20;
+                    const c1 = new Asteroid(this, a.x, a.y, childSize, a.colorHex, a.speedMult);
+                    const c2 = new Asteroid(this, a.x, a.y, childSize, a.colorHex, a.speedMult);
                     if (a.isAmbient) { c1.isAmbient = true; c2.isAmbient = true; }
                     newRocks.push(c1, c2);
                 }
@@ -607,7 +650,6 @@ export default class GameScene extends Phaser.Scene {
     _spawnWave(wave) {
         const count = WAVE_BASE + (wave - 1) * 2;
         const speedMult = 1 + (wave - 1) * 0.12;
-        // Spawn around player position (not screen center)
         const px = this._player.x, py = this._player.y;
         for (let i = 0; i < count; i++) {
             let x, y;
@@ -617,7 +659,9 @@ export default class GameScene extends Phaser.Scene {
                 x = px + Math.cos(angle) * dist;
                 y = py + Math.sin(angle) * dist;
             } while (Math.hypot(x - px, y - py) < 150);
-            this._asteroids.push(new Asteroid(this, x, y, 40, null, speedMult));
+            // 35% chance of giant (size 60) — gives more visual variety
+            const size = Math.random() < 0.35 ? 60 : 40;
+            this._asteroids.push(new Asteroid(this, x, y, size, null, speedMult));
         }
     }
 
@@ -629,7 +673,8 @@ export default class GameScene extends Phaser.Scene {
             const x = Math.random() * WORLD_W;
             const y = Math.random() * WORLD_H;
             if (Math.hypot(x - cx, y - cy) < 600) continue;
-            const size = Math.random() < 0.5 ? 40 : 20;
+            // Mostly giants and large — small ones only appear as split debris
+            const size = Math.random() < 0.50 ? 60 : 40;
             const rock = new Asteroid(this, x, y, size, null, 0.6);
             rock.isAmbient = true;
             this._asteroids.push(rock);
@@ -680,14 +725,15 @@ export default class GameScene extends Phaser.Scene {
                 // Bomb destroys large without splitting
                 const killedByBomb = [...deadB].some(bi => this._bullets[bi]?.isBomb);
                 if (a.size > 18 && !killedByBomb) {
-                    const c1 = new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult);
-                    const c2 = new Asteroid(this, a.x, a.y, a.size / 2, a.colorHex, a.speedMult);
+                    const childSize = a.size >= 50 ? 40 : 20; // 60→40, 40→20
+                    const c1 = new Asteroid(this, a.x, a.y, childSize, a.colorHex, a.speedMult);
+                    const c2 = new Asteroid(this, a.x, a.y, childSize, a.colorHex, a.speedMult);
                     if (a.isAmbient) { c1.isAmbient = true; c2.isAmbient = true; }
                     newRocks.push(c1, c2);
                 }
 
                 // Random weapon drop (only upgrades drop)
-                if (this._weaponsDroppedThisWave < 2 && Math.random() < 0.06) {
+                if (this._weaponsDroppedThisWave < 4 && Math.random() < 0.15) {
                     const wepId = WEAPON_DROP_POOL[Math.floor(Math.random() * WEAPON_DROP_POOL.length)];
                     this._pickups.push({ x: a.x, y: a.y, id: wepId, life: 14000, rotation: 0 });
                     this._weaponsDroppedThisWave++;
@@ -735,6 +781,7 @@ export default class GameScene extends Phaser.Scene {
 
     // ── Wave clear ────────────────────────────────────────────────────────────
     _waveClear() {
+        this._ufo = null; this._ufoBullets = [];
         this._waveClearPending = true;
         const save = SaveManager.load();
         const dropChance = this._wave <= 3 ? 1.0 : Math.max(0.3, 0.8 - this._wave * 0.05);
@@ -749,10 +796,12 @@ export default class GameScene extends Phaser.Scene {
 
     _onNextWave() {
         this._wave++;
+        this._ufo = null; this._ufoBullets = [];
         this._spawnWave(this._wave);
         this._waveClearPending = false;
         this._weaponsDroppedThisWave = 0;
         this._syncHUD();
+        this._scheduleUFO();
     }
 
     // ── Game over ─────────────────────────────────────────────────────────────
@@ -774,6 +823,147 @@ export default class GameScene extends Phaser.Scene {
                 x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
                 life: 1, decay: Math.random() * 0.025 + 0.015, size: Math.random() * 2.5 + 0.8, color: colorHex
             });
+        }
+    }
+
+    // ── UFO ───────────────────────────────────────────────────────────────────
+    _scheduleUFO() {
+        // Spawn 7–12 seconds into the wave, once per wave
+        const delay = 7000 + Math.random() * 5000;
+        this.time.delayedCall(delay, () => {
+            if (!this._gameOver && !this._waveClearPending && !this._ufo) this._spawnUFO();
+        });
+    }
+
+    _spawnUFO() {
+        const cam = this.cameras.main;
+        const { width, height } = this.scale;
+        // Spawn off-screen relative to current viewport
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 450 + Math.random() * 200;
+        const cx = cam.scrollX + width / 2;
+        const cy = cam.scrollY + height / 2;
+        this._ufo = {
+            x: Phaser.Math.Clamp(cx + Math.cos(angle) * dist, 50, WORLD_W - 50),
+            y: Phaser.Math.Clamp(cy + Math.sin(angle) * dist, 50, WORLD_H - 50),
+            vx: 0, vy: 0,
+            hp: UFO_HP,
+            shootTimer: 1800,
+            sineT: 0,
+            laserTimer: 0,
+        };
+    }
+
+    _updateUFO(delta) {
+        const ufo = this._ufo;
+        const px = this._player.x, py = this._player.y;
+
+        // Gradually steer toward player with sinusoidal wobble
+        const desiredAngle = Math.atan2(py - ufo.y, px - ufo.x);
+        const curAngle = Math.atan2(ufo.vy, ufo.vx) || desiredAngle;
+        const diff = Phaser.Math.Angle.Wrap(desiredAngle - curAngle);
+        const newAngle = curAngle + Phaser.Math.Clamp(diff, -0.03, 0.03);
+
+        ufo.sineT += delta * 0.002;
+        const perp = newAngle + Math.PI / 2;
+        const wobble = Math.sin(ufo.sineT) * 0.8;
+        const BASE = 1.4;
+
+        ufo.vx = Math.cos(newAngle) * BASE + Math.cos(perp) * wobble;
+        ufo.vy = Math.sin(newAngle) * BASE + Math.sin(perp) * wobble;
+        ufo.x = ((ufo.x + ufo.vx + WORLD_W) % WORLD_W);
+        ufo.y = ((ufo.y + ufo.vy + WORLD_H) % WORLD_H);
+
+        // Fire at player
+        ufo.shootTimer -= delta;
+        if (ufo.shootTimer <= 0) {
+            ufo.shootTimer = 2000 + Math.random() * 1500;
+            const a = Math.atan2(py - ufo.y, px - ufo.x);
+            this._ufoBullets.push({ x: ufo.x, y: ufo.y, vx: Math.cos(a) * 3, vy: Math.sin(a) * 3, life: 3000 });
+        }
+
+        // Advance UFO bullets
+        this._ufoBullets = this._ufoBullets.filter(b => {
+            b.x += b.vx; b.y += b.vy; b.life -= delta;
+            return b.life > 0;
+        });
+    }
+
+    _damageUFO(amount) {
+        if (!this._ufo) return;
+        this._ufo.hp -= amount;
+        this._explode(this._ufo.x, this._ufo.y, 0xaaddff);
+        if (this._ufo.hp <= 0) {
+            this._score += UFO_SCORE;
+            this._explode(this._ufo.x, this._ufo.y, 0xffffff);
+            this._explode(this._ufo.x, this._ufo.y, 0x00ffff);
+            // Guaranteed weapon drop on UFO kill
+            const wepId = WEAPON_DROP_POOL[Math.floor(Math.random() * WEAPON_DROP_POOL.length)];
+            this._pickups.push({ x: this._ufo.x, y: this._ufo.y, id: wepId, life: 14000, rotation: 0 });
+            this._ufo = null;
+            this._ufoBullets = [];
+        }
+    }
+
+    _ufoCollisions() {
+        if (!this._ufo) return;
+        const ufo = this._ufo;
+
+        // Laser continuously damages UFO
+        if (this._laserActive && this._player._visible) {
+            const p = this._player;
+            const cos = Math.cos(p.rotation), sin = Math.sin(p.rotation);
+            const dx = ufo.x - p.x, dy = ufo.y - p.y;
+            const proj = dx * cos + dy * sin;
+            if (proj > 0 && proj < 900 && Math.abs(dx * sin - dy * cos) < UFO_RADIUS) {
+                ufo.laserTimer -= 16; // approx one frame at 60fps
+                if (ufo.laserTimer <= 0) {
+                    ufo.laserTimer = 400; // 1 damage per 400ms
+                    this._damageUFO(1);
+                    if (!this._ufo) return;
+                }
+            }
+        }
+
+        // Player bullets → UFO
+        const deadB = new Set();
+        this._bullets.forEach((b, bi) => {
+            if (!this._ufo) return;
+            const dist = Math.hypot(b.x - ufo.x, b.y - ufo.y);
+            const hit = b.isBomb ? dist < b.bombRadius : dist < UFO_RADIUS;
+            if (hit) { deadB.add(bi); this._damageUFO(1); }
+        });
+        this._bullets = this._bullets.filter((_, bi) => !deadB.has(bi));
+        if (!this._ufo) return;
+
+        // UFO bullets → player
+        if (!this._invincible && this._player._visible) {
+            for (let i = 0; i < this._ufoBullets.length; i++) {
+                const b = this._ufoBullets[i];
+                if (Math.hypot(b.x - this._player.x, b.y - this._player.y) < this._playerStats.radius + 5) {
+                    this._ufoBullets.splice(i, 1);
+                    if (this._shield?.active) {
+                        this._shield.active = false;
+                        this._explode(this._player.x, this._player.y, 0x4488ff);
+                        if (this._shieldDef?.regenTime) this._shield.regenTimer = this._shieldDef.regenTime;
+                        this._syncHUD();
+                    } else { this._loseLife(); }
+                    break;
+                }
+            }
+        }
+        if (!this._ufo) return;
+
+        // UFO body rams player
+        if (!this._invincible && this._player._visible) {
+            if (Math.hypot(this._player.x - ufo.x, this._player.y - ufo.y) < UFO_RADIUS + this._playerStats.radius) {
+                if (this._shield?.active) {
+                    this._shield.active = false;
+                    this._explode(this._player.x, this._player.y, 0x4488ff);
+                    if (this._shieldDef?.regenTime) this._shield.regenTimer = this._shieldDef.regenTime;
+                    this._syncHUD();
+                } else { this._loseLife(); }
+            }
         }
     }
 
@@ -813,6 +1003,14 @@ export default class GameScene extends Phaser.Scene {
             if (mx < MX || mx > MX + SIZE || my < MY || my > MY + SIZE) continue;
             mg.fillStyle(0xffff00, 0.9);
             mg.fillCircle(mx, my, 2);
+        }
+
+        // UFO
+        if (this._ufo) {
+            const ux = MX + this._ufo.x * SC;
+            const uy = MY + this._ufo.y * SC;
+            mg.fillStyle(0xff44ff, 1);
+            mg.fillCircle(ux, uy, 3);
         }
 
         // Player — dot + facing line
