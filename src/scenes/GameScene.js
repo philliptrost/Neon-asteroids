@@ -410,6 +410,31 @@ export default class GameScene extends Phaser.Scene {
         // 4. Asteroids
         this._asteroids.forEach(a => a.draw(g));
 
+        // 4b. Weapon glow visible inside weapon-carrying asteroids
+        const now = this.time.now;
+        for (const a of this._asteroids) {
+            if (!a.containsWeapon) continue;
+            const wInfo = GearData.weapons[a.containsWeapon];
+            if (!wInfo) continue;
+            const color = wInfo.bulletColor || 0xffff00;
+            const pulse = 0.45 + Math.sin(now * 0.004) * 0.3;
+            const s = a.size * 0.32;
+            const rot = now * 0.0015;
+            const rc = Math.cos(rot), rs = Math.sin(rot);
+            // Rotating diamond outline
+            g.lineStyle(1.5, color, pulse);
+            g.beginPath();
+            g.moveTo(a.x + rc * s, a.y + rs * s);
+            g.lineTo(a.x - rs * s, a.y + rc * s);
+            g.lineTo(a.x - rc * s, a.y - rs * s);
+            g.lineTo(a.x + rs * s, a.y - rc * s);
+            g.closePath();
+            g.strokePath();
+            // Soft inner glow
+            g.fillStyle(color, pulse * 0.55);
+            g.fillCircle(a.x, a.y, 3.5);
+        }
+
         // 5. Bullets
         this._bullets.forEach(b => {
             const alpha = Phaser.Math.Clamp(b.life / 1400, 0, 1);
@@ -609,12 +634,21 @@ export default class GameScene extends Phaser.Scene {
             if (deadA.has(ai)) {
                 this._explode(a.x, a.y, a.colorHex);
                 this._score += a.size > 25 ? 10 : a.size > 14 ? 30 : 50;
-                if (a.size > 18) {
-                    const childSize = a.size >= 50 ? 40 : 20;
-                    const c1 = new Asteroid(this, a.x, a.y, childSize, a.colorHex, a.speedMult);
-                    const c2 = new Asteroid(this, a.x, a.y, childSize, a.colorHex, a.speedMult);
-                    if (a.isAmbient) { c1.isAmbient = true; c2.isAmbient = true; }
-                    newRocks.push(c1, c2);
+                if (a.size > 8) {
+                    const childSize  = a.size >= 50 ? 40 : a.size >= 30 ? 20 : 10;
+                    const childCount = a.size >= 50
+                        ? (Math.random() < 0.5 ? 2 : 3)
+                        : a.size >= 30
+                            ? (Math.random() < 0.5 ? 1 : 3)
+                            : (Math.random() < 0.5 ? 1 : 2);
+                    for (let ci = 0; ci < childCount; ci++) {
+                        const ch = new Asteroid(this, a.x, a.y, childSize, a.colorHex, a.speedMult);
+                        if (a.isAmbient) ch.isAmbient = true;
+                        newRocks.push(ch);
+                    }
+                }
+                if (a.containsWeapon) {
+                    this._pickups.push({ x: a.x, y: a.y, id: a.containsWeapon, life: 14000, rotation: 0 });
                 }
             } else newRocks.push(a);
         });
@@ -661,7 +695,9 @@ export default class GameScene extends Phaser.Scene {
             } while (Math.hypot(x - px, y - py) < 150);
             // 35% chance of giant (size 60) — gives more visual variety
             const size = Math.random() < 0.35 ? 60 : 40;
-            this._asteroids.push(new Asteroid(this, x, y, size, null, speedMult));
+            const rock = new Asteroid(this, x, y, size, null, speedMult);
+            if (Math.random() < 0.12) rock.containsWeapon = WEAPON_DROP_POOL[Math.floor(Math.random() * WEAPON_DROP_POOL.length)];
+            this._asteroids.push(rock);
         }
     }
 
@@ -677,6 +713,7 @@ export default class GameScene extends Phaser.Scene {
             const size = Math.random() < 0.50 ? 60 : 40;
             const rock = new Asteroid(this, x, y, size, null, 0.6);
             rock.isAmbient = true;
+            if (Math.random() < 0.12) rock.containsWeapon = WEAPON_DROP_POOL[Math.floor(Math.random() * WEAPON_DROP_POOL.length)];
             this._asteroids.push(rock);
             count++;
         }
@@ -722,18 +759,27 @@ export default class GameScene extends Phaser.Scene {
                 this._explode(a.x, a.y, a.colorHex);
                 this._score += a.size > 25 ? 10 : a.size > 14 ? 30 : 50;
 
-                // Bomb destroys large without splitting
+                // Bomb destroys without splitting; otherwise variable fragment count by tier
                 const killedByBomb = [...deadB].some(bi => this._bullets[bi]?.isBomb);
-                if (a.size > 18 && !killedByBomb) {
-                    const childSize = a.size >= 50 ? 40 : 20; // 60→40, 40→20
-                    const c1 = new Asteroid(this, a.x, a.y, childSize, a.colorHex, a.speedMult);
-                    const c2 = new Asteroid(this, a.x, a.y, childSize, a.colorHex, a.speedMult);
-                    if (a.isAmbient) { c1.isAmbient = true; c2.isAmbient = true; }
-                    newRocks.push(c1, c2);
+                if (a.size > 8 && !killedByBomb) {
+                    // 60→2-3 large(40)   40→1-3 medium(20)   20→1-2 small(10)
+                    const childSize  = a.size >= 50 ? 40 : a.size >= 30 ? 20 : 10;
+                    const childCount = a.size >= 50
+                        ? (Math.random() < 0.5 ? 2 : 3)
+                        : a.size >= 30
+                            ? (Math.random() < 0.5 ? 1 : 3)
+                            : (Math.random() < 0.5 ? 1 : 2);
+                    for (let ci = 0; ci < childCount; ci++) {
+                        const ch = new Asteroid(this, a.x, a.y, childSize, a.colorHex, a.speedMult);
+                        if (a.isAmbient) ch.isAmbient = true;
+                        newRocks.push(ch);
+                    }
                 }
 
-                // Random weapon drop (only upgrades drop)
-                if (this._weaponsDroppedThisWave < 4 && Math.random() < 0.15) {
+                // Pre-assigned weapon always drops; rare random surprise otherwise
+                if (a.containsWeapon) {
+                    this._pickups.push({ x: a.x, y: a.y, id: a.containsWeapon, life: 14000, rotation: 0 });
+                } else if (this._weaponsDroppedThisWave < 2 && Math.random() < 0.07) {
                     const wepId = WEAPON_DROP_POOL[Math.floor(Math.random() * WEAPON_DROP_POOL.length)];
                     this._pickups.push({ x: a.x, y: a.y, id: wepId, life: 14000, rotation: 0 });
                     this._weaponsDroppedThisWave++;
