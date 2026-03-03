@@ -8,12 +8,13 @@ const WORLD_W = 6000;
 const WORLD_H = 6000;
 
 const WEAPON_TIERS = {
-    weapon_basic:  0,
-    weapon_rapid:  1,
-    weapon_triple: 1,
-    weapon_laser:  2,
-    weapon_bomb:   2,
-    weapon_360:    2,
+    weapon_basic:   0,
+    weapon_rapid:   1,
+    weapon_triple:  1,
+    weapon_laser:   2,
+    weapon_bomb:    2,
+    weapon_360:     2,
+    weapon_missile: 2,
 };
 
 // ── Mobile button layout ──────────────────────────────────────────────────────
@@ -96,6 +97,10 @@ export default class GameScene extends Phaser.Scene {
         // ── World graphics layers ──────────────────────────────────────────────
         this._gfx = this.add.graphics().setDepth(0);
         this._topGfx = this.add.graphics().setDepth(5);
+
+        // ── Minimap (screen-space, not affected by world camera) ───────────────
+        this._minimapGfx = this.add.graphics().setScrollFactor(0).setDepth(22);
+        this.cameras.main.ignore(this._minimapGfx);
 
         // ── Player (starts at world center) ────────────────────────────────────
         this._player = new Player(this, WORLD_W / 2, WORLD_H / 2, this._playerStats);
@@ -229,6 +234,25 @@ export default class GameScene extends Phaser.Scene {
 
         // Update bullets
         this._bullets = this._bullets.filter(b => {
+            if (b.isMissile && this._asteroids.length > 0) {
+                // Seek nearest asteroid
+                let nearest = null, nearDist = Infinity;
+                for (const a of this._asteroids) {
+                    const d = Math.hypot(b.x - a.x, b.y - a.y);
+                    if (d < nearDist) { nearDist = d; nearest = a; }
+                }
+                if (nearest) {
+                    const targetAngle = Math.atan2(nearest.y - b.y, nearest.x - b.x);
+                    const currentAngle = Math.atan2(b.vy, b.vx);
+                    const diff = Phaser.Math.Angle.Wrap(targetAngle - currentAngle);
+                    const turn = Phaser.Math.Clamp(diff, -b.turnRate, b.turnRate);
+                    const newAngle = currentAngle + turn;
+                    const spd = Math.hypot(b.vx, b.vy);
+                    b.vx = Math.cos(newAngle) * spd;
+                    b.vy = Math.sin(newAngle) * spd;
+                    b.angle = newAngle;
+                }
+            }
             b.x += b.vx; b.y += b.vy; b.life -= delta;
             return b.life > 0;
         });
@@ -279,6 +303,7 @@ export default class GameScene extends Phaser.Scene {
 
         this._drawBackground();
         this._draw();
+        this._drawMinimap();
     }
 
     // ── Parallax background draw (screen-space tiling) ────────────────────────
@@ -381,12 +406,25 @@ export default class GameScene extends Phaser.Scene {
             const r = (b.color >> 16) & 0xff;
             const gv = (b.color >> 8) & 0xff;
             const bv = b.color & 0xff;
-            const isBomb = b.isBomb;
             tg.fillStyle(Phaser.Display.Color.GetColor(r, gv, bv), alpha);
-            if (isBomb) {
+            if (b.isBomb) {
                 tg.fillCircle(b.x, b.y, 7);
                 tg.lineStyle(2, b.color, alpha * 0.5);
                 tg.strokeCircle(b.x, b.y, b.bombRadius * (1 - b.life / 6000) * 0.4);
+            } else if (b.isMissile) {
+                const ang = b.angle ?? Math.atan2(b.vy, b.vx);
+                const mc = Math.cos(ang), ms = Math.sin(ang);
+                // Body
+                tg.fillStyle(b.color, alpha);
+                tg.beginPath();
+                tg.moveTo(b.x + mc * 9, b.y + ms * 9);
+                tg.lineTo(b.x - mc * 5 - ms * 3, b.y - ms * 5 + mc * 3);
+                tg.lineTo(b.x - mc * 5 + ms * 3, b.y - ms * 5 - mc * 3);
+                tg.closePath();
+                tg.fillPath();
+                // Exhaust flicker
+                tg.fillStyle(0xffaa00, alpha * (0.5 + Math.random() * 0.5));
+                tg.fillCircle(b.x - mc * 6, b.y - ms * 6, 2.5 + Math.random() * 1.5);
             } else {
                 tg.fillCircle(b.x, b.y, 3);
             }
@@ -458,8 +496,8 @@ export default class GameScene extends Phaser.Scene {
                 this._bullets.push({
                     x: p.x + Math.cos(a) * 22,
                     y: p.y + Math.sin(a) * 22,
-                    vx: Math.cos(a) * ws.bulletSpeed,
-                    vy: Math.sin(a) * ws.bulletSpeed,
+                    vx: Math.cos(a) * ws.bulletSpeed + p.vx,
+                    vy: Math.sin(a) * ws.bulletSpeed + p.vy,
                     life: 1800, color: ws.bulletColor,
                 });
             }
@@ -470,10 +508,24 @@ export default class GameScene extends Phaser.Scene {
             this._bullets.push({
                 x: p.x + Math.cos(p.rotation) * 22,
                 y: p.y + Math.sin(p.rotation) * 22,
-                vx: Math.cos(p.rotation) * ws.bulletSpeed + p.vx * 0.2,
-                vy: Math.sin(p.rotation) * ws.bulletSpeed + p.vy * 0.2,
+                vx: Math.cos(p.rotation) * ws.bulletSpeed + p.vx,
+                vy: Math.sin(p.rotation) * ws.bulletSpeed + p.vy,
                 life: 6000, color: ws.bulletColor,
                 isBomb: true, bombRadius: ws.bombRadius,
+            });
+            return;
+        }
+
+        if (ws.type === 'missile') {
+            const angle = p.rotation;
+            this._bullets.push({
+                x: p.x + Math.cos(angle) * 22,
+                y: p.y + Math.sin(angle) * 22,
+                vx: Math.cos(angle) * ws.bulletSpeed + p.vx,
+                vy: Math.sin(angle) * ws.bulletSpeed + p.vy,
+                life: 6000, color: ws.bulletColor,
+                isMissile: true, angle,
+                turnRate: 0.07,
             });
             return;
         }
@@ -485,8 +537,8 @@ export default class GameScene extends Phaser.Scene {
             this._bullets.push({
                 x: p.x + Math.cos(p.rotation) * 22,
                 y: p.y + Math.sin(p.rotation) * 22,
-                vx: Math.cos(a) * ws.bulletSpeed + p.vx * 0.3,
-                vy: Math.sin(a) * ws.bulletSpeed + p.vy * 0.3,
+                vx: Math.cos(a) * ws.bulletSpeed + p.vx,
+                vy: Math.sin(a) * ws.bulletSpeed + p.vy,
                 life: 2000, color: ws.bulletColor,
             });
         }
@@ -723,6 +775,58 @@ export default class GameScene extends Phaser.Scene {
                 life: 1, decay: Math.random() * 0.025 + 0.015, size: Math.random() * 2.5 + 0.8, color: colorHex
             });
         }
+    }
+
+    // ── Minimap ───────────────────────────────────────────────────────────────
+    _drawMinimap() {
+        const { width } = this.scale;
+        const SIZE = 100;
+        const MX = width - SIZE - 8, MY = 8;
+        const SC = SIZE / WORLD_W;
+        const mg = this._minimapGfx;
+        mg.clear();
+
+        // Background
+        mg.fillStyle(0x000011, 0.50);
+        mg.fillRect(MX, MY, SIZE, SIZE);
+        mg.lineStyle(1, 0x334466, 0.8);
+        mg.strokeRect(MX, MY, SIZE, SIZE);
+
+        // Asteroids
+        for (const a of this._asteroids) {
+            const mx = MX + a.x * SC;
+            const my = MY + a.y * SC;
+            if (mx < MX || mx > MX + SIZE || my < MY || my > MY + SIZE) continue;
+            if (a.isAmbient) {
+                mg.fillStyle(0x445566, 0.55);
+                mg.fillCircle(mx, my, 1.5);
+            } else {
+                mg.fillStyle(0xaaddff, 0.9);
+                mg.fillCircle(mx, my, a.size > 25 ? 2.5 : 1.8);
+            }
+        }
+
+        // Pickups
+        for (const p of this._pickups) {
+            const mx = MX + p.x * SC;
+            const my = MY + p.y * SC;
+            if (mx < MX || mx > MX + SIZE || my < MY || my > MY + SIZE) continue;
+            mg.fillStyle(0xffff00, 0.9);
+            mg.fillCircle(mx, my, 2);
+        }
+
+        // Player — dot + facing line
+        const px = MX + this._player.x * SC;
+        const py = MY + this._player.y * SC;
+        const cos = Math.cos(this._player.rotation);
+        const sin = Math.sin(this._player.rotation);
+        mg.lineStyle(1, 0x00ffff, 0.85);
+        mg.beginPath();
+        mg.moveTo(px, py);
+        mg.lineTo(px + cos * 5, py + sin * 5);
+        mg.strokePath();
+        mg.fillStyle(0x00ffff, 1);
+        mg.fillCircle(px, py, 2.5);
     }
 
     // ── Mobile controls ───────────────────────────────────────────────────────

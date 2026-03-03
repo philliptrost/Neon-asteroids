@@ -14,6 +14,7 @@ export const GearData = {
         weapon_laser: { id: 'weapon_laser', name: 'Laser Beam', desc: 'Continuous piercing laser beam.', cooldown: 0, bulletSpeed: 0, bulletCount: 1, spread: 0, bulletColor: 0xff00ff, rarity: 'uncommon', type: 'laser' },
         weapon_bomb: { id: 'weapon_bomb', name: 'Nova Bomb', desc: 'Slow projectile — destroys large asteroids instantly.', cooldown: 1200, bulletSpeed: 2.5, bulletCount: 1, spread: 0, bulletColor: 0xff6600, rarity: 'rare', type: 'bomb', bombRadius: 80 },
         weapon_360: { id: 'weapon_360', name: '360° Burst', desc: '8 bullets fired in all directions.', cooldown: 600, bulletSpeed: 6, bulletCount: 8, spread: 0, bulletColor: 0x00ffff, rarity: 'rare', type: '360' },
+        weapon_missile: { id: 'weapon_missile', name: 'Seeker Missile', desc: 'Homing missile locks onto nearest asteroid.', cooldown: 900, bulletSpeed: 3.5, bulletCount: 1, spread: 0, bulletColor: 0xff4400, rarity: 'rare', type: 'missile' },
     },
     shields: {
         shield_basic: { id: 'shield_basic', name: 'Deflector', desc: 'Absorbs one hit then breaks.', regenTime: null, color: 0x4488ff, rarity: 'uncommon' },
@@ -34,6 +35,7 @@ const LOOT_POOL = [
     { slot: 'weapons', id: 'weapon_laser', weight: 2 },
     { slot: 'weapons', id: 'weapon_bomb', weight: 1 },
     { slot: 'weapons', id: 'weapon_360', weight: 1 },
+    { slot: 'weapons', id: 'weapon_missile', weight: 1 },
     { slot: 'shields', id: 'shield_basic', weight: 4 },
     { slot: 'shields', id: 'shield_regen', weight: 2 },
     { slot: 'hulls', id: 'hull_speeder', weight: 2 },
@@ -50,7 +52,7 @@ export function rollLootDrop(ownedGear) {
 }
 
 // Only upgraded (non-default) weapons drop in-game
-export const WEAPON_DROP_POOL = ['weapon_rapid', 'weapon_triple', 'weapon_laser', 'weapon_bomb', 'weapon_360'];
+export const WEAPON_DROP_POOL = ['weapon_rapid', 'weapon_triple', 'weapon_laser', 'weapon_bomb', 'weapon_360', 'weapon_missile'];
 
 export const RARITY_COLORS = { common: '#aaaaaa', uncommon: '#00ff88', rare: '#ff00ff' };
 export const SLOT_LABELS = { engines: 'ENGINE', weapons: 'WEAPON', shields: 'SHIELD', hulls: 'HULL' };
