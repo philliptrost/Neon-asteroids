@@ -7,11 +7,11 @@ export default class Player {
         this.vx = 0;
         this.vy = 0;
         this.rotVel = 0;
-        this.rotAccel = (stats.rotAccel || 0.009) * 0.8;
-        this.maxRotVel = 0.09 * 0.8;
+        this.rotAccel = stats.rotAccel || 0.012;
+        this.maxRotVel = 0.12;
         this.rotFriction = 0.92;  // smoother angular momentum, less instant stop
-        this.thrustPower = stats.thrustPower || 0.08;
-        this.maxSpeed = stats.maxSpeed || 4.5;
+        this.thrustPower = stats.thrustPower || 0.11;
+        this.maxSpeed = stats.maxSpeed || 6.0;
         this.friction = 0.998;    // near-zero drag — objects in space stay in motion
         this._visible = true;
         this._wasThrusting = false;
