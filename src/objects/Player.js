@@ -17,7 +17,7 @@ export default class Player {
         this._wasThrusting = false;
         this._thrustFlicker = 0;
         this._trail = [];
-        this._trailMax = 180;
+        this._trailMax = 600;
         this.isThrusting = false;
     }
 
@@ -53,8 +53,14 @@ export default class Player {
         this.rotation += this.rotVel;
         this.rotVel *= this.rotFriction;
 
-        if (this.isThrusting) {
-            this._trail.push({ x: this.x - Math.cos(this.rotation) * 16, y: this.y - Math.sin(this.rotation) * 16, age: 0 });
+        const spd = Math.hypot(this.vx, this.vy);
+        if (spd > 0.25) {
+            this._trail.push({
+                x: this.x - Math.cos(this.rotation) * 16,
+                y: this.y - Math.sin(this.rotation) * 16,
+                age: 0,
+                spd,
+            });
         }
         this._trail = this._trail.filter(p => ++p.age < this._trailMax);
 
@@ -64,10 +70,14 @@ export default class Player {
     }
 
     draw(gfx) {
-        // Trail (faint, stays at true world position only)
+        // Trail — length and brightness scale with speed
         for (const pt of this._trail) {
-            gfx.fillStyle(0xffffff, (1 - pt.age / this._trailMax) * 0.35);
-            gfx.fillCircle(pt.x, pt.y, 1.0);
+            const frac = 1 - pt.age / this._trailMax;
+            const spdFrac = Math.min(1, pt.spd / this.maxSpeed);
+            const alpha = frac * spdFrac * 0.55;
+            const size = Math.min(2.5, 0.6 + spdFrac * 1.8);
+            gfx.fillStyle(0xffffff, alpha);
+            gfx.fillCircle(pt.x, pt.y, size);
         }
         this.drawAt(gfx, this.x, this.y);
     }

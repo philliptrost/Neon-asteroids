@@ -47,6 +47,7 @@ export default class GameScene extends Phaser.Scene {
         this._laserActive = false;
         this._bgObjects = [];
         this._camX = 0; this._camY = 0;
+        this._shake = { trauma: 0, time: 0 };
     }
 
     create() {
@@ -305,8 +306,17 @@ export default class GameScene extends Phaser.Scene {
         const targetCY = this._player.y - height / 2;
         this._camX += (targetCX - this._camX) * 0.10;
         this._camY += (targetCY - this._camY) * 0.10;
-        this.cameras.main.scrollX = Phaser.Math.Clamp(this._camX, 0, WORLD_W - width);
-        this.cameras.main.scrollY = Phaser.Math.Clamp(this._camY, 0, WORLD_H - height);
+
+        // Trauma screen shake — applied before clamp so world edges still win
+        const sk = this._shake;
+        sk.time += dt;
+        const mag = sk.trauma * sk.trauma;
+        const shakeX = Math.sin(sk.time * 1.7) * mag * 14;
+        const shakeY = Math.sin(sk.time * 2.3) * mag * 14;
+        sk.trauma = Math.max(0, sk.trauma - 0.04 * dt);
+
+        this.cameras.main.scrollX = Phaser.Math.Clamp(this._camX + shakeX, 0, WORLD_W - width);
+        this.cameras.main.scrollY = Phaser.Math.Clamp(this._camY + shakeY, 0, WORLD_H - height);
 
         if (this._hud) this._hud.updateScore(this._score);
         if (this._asteroids.length === 0 || this._asteroids.every(a => a.isAmbient)) this._waveClear();
@@ -633,14 +643,13 @@ export default class GameScene extends Phaser.Scene {
         this._asteroids.forEach((a, ai) => {
             if (deadA.has(ai)) {
                 this._explode(a.x, a.y, a.colorHex);
-                this._score += a.size > 25 ? 10 : a.size > 14 ? 30 : 50;
-                if (a.size > 8) {
-                    const childSize  = a.size >= 50 ? 40 : a.size >= 30 ? 20 : 10;
+                this._score += a.size >= 50 ? 10 : a.size >= 30 ? 30 : 50;
+                if (a.size >= 30) {
+                    // 60→2-3 large(40)   40→1-3 medium(20)   20→terminal (no children)
+                    const childSize  = a.size >= 50 ? 40 : 20;
                     const childCount = a.size >= 50
                         ? (Math.random() < 0.5 ? 2 : 3)
-                        : a.size >= 30
-                            ? (Math.random() < 0.5 ? 1 : 3)
-                            : (Math.random() < 0.5 ? 1 : 2);
+                        : (Math.random() < 0.5 ? 1 : 3);
                     for (let ci = 0; ci < childCount; ci++) {
                         const ch = new Asteroid(this, a.x, a.y, childSize, a.colorHex, a.speedMult);
                         if (a.isAmbient) ch.isAmbient = true;
@@ -696,7 +705,7 @@ export default class GameScene extends Phaser.Scene {
             // 35% chance of giant (size 60) — gives more visual variety
             const size = Math.random() < 0.35 ? 60 : 40;
             const rock = new Asteroid(this, x, y, size, null, speedMult);
-            if (Math.random() < 0.12) rock.containsWeapon = WEAPON_DROP_POOL[Math.floor(Math.random() * WEAPON_DROP_POOL.length)];
+            if (size === 60 && Math.random() < 0.22) rock.containsWeapon = WEAPON_DROP_POOL[Math.floor(Math.random() * WEAPON_DROP_POOL.length)];
             this._asteroids.push(rock);
         }
     }
@@ -713,7 +722,7 @@ export default class GameScene extends Phaser.Scene {
             const size = Math.random() < 0.50 ? 60 : 40;
             const rock = new Asteroid(this, x, y, size, null, 0.6);
             rock.isAmbient = true;
-            if (Math.random() < 0.12) rock.containsWeapon = WEAPON_DROP_POOL[Math.floor(Math.random() * WEAPON_DROP_POOL.length)];
+            if (size === 60 && Math.random() < 0.22) rock.containsWeapon = WEAPON_DROP_POOL[Math.floor(Math.random() * WEAPON_DROP_POOL.length)];
             this._asteroids.push(rock);
             count++;
         }
@@ -761,14 +770,12 @@ export default class GameScene extends Phaser.Scene {
 
                 // Bomb destroys without splitting; otherwise variable fragment count by tier
                 const killedByBomb = [...deadB].some(bi => this._bullets[bi]?.isBomb);
-                if (a.size > 8 && !killedByBomb) {
-                    // 60→2-3 large(40)   40→1-3 medium(20)   20→1-2 small(10)
-                    const childSize  = a.size >= 50 ? 40 : a.size >= 30 ? 20 : 10;
+                if (a.size >= 30 && !killedByBomb) {
+                    // 60→2-3 large(40)   40→1-3 medium(20)   20→terminal (no children)
+                    const childSize  = a.size >= 50 ? 40 : 20;
                     const childCount = a.size >= 50
                         ? (Math.random() < 0.5 ? 2 : 3)
-                        : a.size >= 30
-                            ? (Math.random() < 0.5 ? 1 : 3)
-                            : (Math.random() < 0.5 ? 1 : 2);
+                        : (Math.random() < 0.5 ? 1 : 3);
                     for (let ci = 0; ci < childCount; ci++) {
                         const ch = new Asteroid(this, a.x, a.y, childSize, a.colorHex, a.speedMult);
                         if (a.isAmbient) ch.isAmbient = true;
@@ -797,6 +804,7 @@ export default class GameScene extends Phaser.Scene {
                 if (this._shield?.active) {
                     this._shield.active = false;
                     this._explode(this._player.x, this._player.y, 0x4488ff);
+                    this._triggerShake(0.35);
                     if (this._shieldDef.regenTime) this._shield.regenTimer = this._shieldDef.regenTime;
                     this._syncHUD();
                 } else {
@@ -808,6 +816,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     _loseLife() {
+        this._triggerShake(0.6);
         this._lives--;
         this._syncHUD();
         this._explode(this._player.x, this._player.y, 0xffffff);
@@ -823,6 +832,10 @@ export default class GameScene extends Phaser.Scene {
                 if (++n >= 20) { this._player._visible = true; this._invincible = false; t.remove(); }
             }
         });
+    }
+
+    _triggerShake(trauma) {
+        this._shake.trauma = Math.min(this._shake.trauma + trauma, 1.0);
     }
 
     // ── Wave clear ────────────────────────────────────────────────────────────
@@ -991,6 +1004,7 @@ export default class GameScene extends Phaser.Scene {
                     if (this._shield?.active) {
                         this._shield.active = false;
                         this._explode(this._player.x, this._player.y, 0x4488ff);
+                        this._triggerShake(0.35);
                         if (this._shieldDef?.regenTime) this._shield.regenTimer = this._shieldDef.regenTime;
                         this._syncHUD();
                     } else { this._loseLife(); }
@@ -1006,6 +1020,7 @@ export default class GameScene extends Phaser.Scene {
                 if (this._shield?.active) {
                     this._shield.active = false;
                     this._explode(this._player.x, this._player.y, 0x4488ff);
+                    this._triggerShake(0.35);
                     if (this._shieldDef?.regenTime) this._shield.regenTimer = this._shieldDef.regenTime;
                     this._syncHUD();
                 } else { this._loseLife(); }
