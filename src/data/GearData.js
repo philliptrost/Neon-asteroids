@@ -1,6 +1,6 @@
 export const GearData = {
     engines: {
-        engine_ion: { id: 'engine_ion', name: 'Ion Drive', desc: 'Standard thrust. Balanced.', thrustPower: 0.08, maxSpeed: 4.5, rotAccel: 0.009, color: 0x00ffff, rarity: 'common' },
+        engine_ion: { id: 'engine_ion', name: 'Ion Drive', desc: 'Standard thrust. Balanced.', thrustPower: 0.11, maxSpeed: 6.0, rotAccel: 0.012, color: 0x00ffff, rarity: 'common' },
         engine_afterburner: { id: 'engine_afterburner', name: 'Afterburner', desc: 'High thrust, greater top speed.', thrustPower: 0.13, maxSpeed: 6.5, rotAccel: 0.011, color: 0xff6600, rarity: 'uncommon' },
         engine_overdrive: { id: 'engine_overdrive', name: 'Overdrive', desc: 'Extreme speed, hard to control.', thrustPower: 0.18, maxSpeed: 9.0, rotAccel: 0.007, color: 0xff0066, rarity: 'rare' },
     },
