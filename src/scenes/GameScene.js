@@ -1030,62 +1030,79 @@ export default class GameScene extends Phaser.Scene {
 
     // ── Minimap ───────────────────────────────────────────────────────────────
     _drawMinimap() {
-        const { width } = this.scale;
-        const SIZE = 100;
+        const { width, height } = this.scale;
+        const SIZE = 140;
         const MX = width - SIZE - 8, MY = 8;
         const SC = SIZE / WORLD_W;
         const mg = this._minimapGfx;
         mg.clear();
 
         // Background
-        mg.fillStyle(0x000011, 0.50);
+        mg.fillStyle(0x000011, 0.70);
         mg.fillRect(MX, MY, SIZE, SIZE);
-        mg.lineStyle(1, 0x334466, 0.8);
+        mg.lineStyle(1, 0x4466aa, 1);
         mg.strokeRect(MX, MY, SIZE, SIZE);
 
-        // Asteroids
+        // Viewport rectangle — shows the current camera view area
+        const vx1 = Phaser.Math.Clamp(MX + this._camX * SC, MX, MX + SIZE);
+        const vy1 = Phaser.Math.Clamp(MY + this._camY * SC, MY, MY + SIZE);
+        const vx2 = Phaser.Math.Clamp(MX + (this._camX + width) * SC, MX, MX + SIZE);
+        const vy2 = Phaser.Math.Clamp(MY + (this._camY + height) * SC, MY, MY + SIZE);
+        mg.lineStyle(1, 0xffffff, 0.30);
+        mg.strokeRect(vx1, vy1, vx2 - vx1, vy2 - vy1);
+
+        // Asteroids — 3 distinct sizes; wave rocks brighter than ambient
         for (const a of this._asteroids) {
             const mx = MX + a.x * SC;
             const my = MY + a.y * SC;
             if (mx < MX || mx > MX + SIZE || my < MY || my > MY + SIZE) continue;
             if (a.isAmbient) {
-                mg.fillStyle(0x445566, 0.55);
+                mg.fillStyle(0x334455, 0.50);
                 mg.fillCircle(mx, my, 1.5);
             } else {
                 mg.fillStyle(0xaaddff, 0.9);
-                mg.fillCircle(mx, my, a.size > 25 ? 2.5 : 1.8);
+                const r = a.size >= 50 ? 3.5 : a.size >= 30 ? 2.5 : 1.8;
+                mg.fillCircle(mx, my, r);
             }
         }
 
-        // Pickups
+        // Pickups — yellow diamond so they stand out from round blips
         for (const p of this._pickups) {
             const mx = MX + p.x * SC;
             const my = MY + p.y * SC;
             if (mx < MX || mx > MX + SIZE || my < MY || my > MY + SIZE) continue;
-            mg.fillStyle(0xffff00, 0.9);
-            mg.fillCircle(mx, my, 2);
+            mg.fillStyle(0xffff00, 1);
+            mg.beginPath();
+            mg.moveTo(mx,       my - 3.5);
+            mg.lineTo(mx + 2.5, my);
+            mg.lineTo(mx,       my + 3.5);
+            mg.lineTo(mx - 2.5, my);
+            mg.closePath();
+            mg.fillPath();
         }
 
-        // UFO
+        // UFO — magenta fill with a ring so it's impossible to miss
         if (this._ufo) {
             const ux = MX + this._ufo.x * SC;
             const uy = MY + this._ufo.y * SC;
+            mg.lineStyle(1, 0xff44ff, 0.75);
+            mg.strokeCircle(ux, uy, 6);
             mg.fillStyle(0xff44ff, 1);
-            mg.fillCircle(ux, uy, 3);
+            mg.fillCircle(ux, uy, 2.5);
         }
 
-        // Player — dot + facing line
+        // Player — mini chevron pointing in facing direction
         const px = MX + this._player.x * SC;
         const py = MY + this._player.y * SC;
         const cos = Math.cos(this._player.rotation);
         const sin = Math.sin(this._player.rotation);
-        mg.lineStyle(1, 0x00ffff, 0.85);
-        mg.beginPath();
-        mg.moveTo(px, py);
-        mg.lineTo(px + cos * 5, py + sin * 5);
-        mg.strokePath();
         mg.fillStyle(0x00ffff, 1);
-        mg.fillCircle(px, py, 2.5);
+        mg.beginPath();
+        mg.moveTo(px + cos * 5,               py + sin * 5);               // nose
+        mg.lineTo(px - cos * 2 - sin * 3,     py - sin * 2 + cos * 3);    // left wing
+        mg.lineTo(px - cos * 2 + sin * 3,     py - sin * 2 - cos * 3);    // right wing
+        mg.closePath();
+        mg.fillPath();
     }
 
     // ── Mobile controls ───────────────────────────────────────────────────────
