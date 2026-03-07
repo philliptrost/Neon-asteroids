@@ -766,7 +766,7 @@ export default class GameScene extends Phaser.Scene {
         this._asteroids.forEach((a, ai) => {
             if (deadA.has(ai)) {
                 this._explode(a.x, a.y, a.colorHex);
-                this._score += a.size > 25 ? 10 : a.size > 14 ? 30 : 50;
+                this._score += a.size >= 50 ? 10 : a.size >= 30 ? 30 : 50;
 
                 // Bomb destroys without splitting; otherwise variable fragment count by tier
                 const killedByBomb = [...deadB].some(bi => this._bullets[bi]?.isBomb);

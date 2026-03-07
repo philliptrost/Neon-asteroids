@@ -70,14 +70,16 @@ export default class Player {
     }
 
     draw(gfx) {
-        // Trail — length and brightness scale with speed
-        for (const pt of this._trail) {
-            const frac = 1 - pt.age / this._trailMax;
-            const spdFrac = Math.min(1, pt.spd / this.maxSpeed);
-            const alpha = frac * spdFrac * 0.55;
-            const size = Math.min(2.5, 0.6 + spdFrac * 1.8);
-            gfx.fillStyle(0xffffff, alpha);
-            gfx.fillCircle(pt.x, pt.y, size);
+        // Trail — length and brightness scale with speed; hidden during invincibility blink
+        if (this._visible) {
+            for (const pt of this._trail) {
+                const frac = 1 - pt.age / this._trailMax;
+                const spdFrac = Math.min(1, pt.spd / this.maxSpeed);
+                const alpha = frac * spdFrac * 0.55;
+                const size = Math.min(2.5, 0.6 + spdFrac * 1.8);
+                gfx.fillStyle(0xffffff, alpha);
+                gfx.fillCircle(pt.x, pt.y, size);
+            }
         }
         this.drawAt(gfx, this.x, this.y);
     }
